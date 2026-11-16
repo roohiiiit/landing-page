@@ -53,22 +53,24 @@
 
   const VS = `attribute vec2 a; varying vec2 v_uv; void main(){ v_uv=a*.5+.5; gl_Position=vec4(a,0.,1.); }`;
 
-  // u_gyro: smoothed raw tilt vec2, range ~[-1,1] each axis
-  //   x = gamma (lean left/right)
-  //   y = beta  (lean forward/back)
-  // The text UV is offset by u_gyro * TEXT_PARALLAX so the letters
-  // physically slide in whichever direction the phone tilts.
   const FS = `
   #ifdef GL_FRAGMENT_PRECISION_HIGH
   precision highp float;
   #else
   precision mediump float;
   #endif
+
   uniform sampler2D u_mask, u_blur;
   uniform vec2  u_res, u_light;
   uniform float u_time, u_intro;
-  uniform vec2  u_gyro;          // raw smoothed tilt [-1..1]
-  uniform float u_gyro_speed;    // angular speed 0..1
+
+  // Physics fall offset from phone tilt (X: roll, Y: pitch)
+  uniform vec2  u_fall;
+
+  // Press interaction for localized chromatic aberration
+  uniform vec2  u_press_uv;
+  uniform float u_press_power;
+
   uniform vec4  u_rip[8];
   varying vec2  v_uv;
 
@@ -86,294 +88,349 @@
 
   void main(){
     vec2 uv  = v_uv;
-    vec2 asp = vec2(u_res.x/u_res.y,1.);
-    vec2 p   = (uv-.5)*asp;
+    vec2 asp = vec2(u_res.x/u_res.y, 1.);
+    vec2 p   = (uv - .5) * asp;
 
-    // ── Gyro: translate the TEXT in the tilt direction ──────────────────
-    // Sampling offset: subtract so texture content moves WITH tilt.
-    // TEXT_PARALLAX controls how far letters drift (fraction of screen).
-    float TEXT_PARALLAX = 0.13;
-    // Keep Y axis correct: positive beta = top-tilt → text moves up (−y in UV)
-    vec2 textOff = vec2( u_gyro.x, -u_gyro.y ) * TEXT_PARALLAX;
-
-    // Extra: chromatic aberration scales with tilt magnitude + speed
-    float gyroMag = length(u_gyro);
-    float chrAmt  = (gyroMag * 0.012 + u_gyro_speed * 0.008);
-    vec2  chrDir  = (gyroMag > 0.001 ? normalize(u_gyro) : vec2(1.,0.)) * chrAmt;
-
-    // ── Ripples ──────────────────────────────────────────────────────────
+    // ── Touch / click ripples ──────────────────────────────────────────
     vec2  push = vec2(0.);
     float ring = 0.;
     for(int i=0;i<8;i++){
       vec4 r = u_rip[i];
-      if(r.w>0.){
-        vec2  c   = (r.xy-.5)*asp;
-        vec2  dv  = p-c;
-        float d   = length(dv)+1e-4;
-        float age = u_time-r.z;
-        float w   = sin(d*34.-age*9.)*exp(-age*1.3)*exp(-d*2.0)*r.w;
-        push += dv/d*w*.014;
-        ring += abs(w)*smoothstep(0.,.06,age);
+      if(r.w > 0.){
+        vec2  c   = (r.xy - .5) * asp;
+        vec2  dv  = p - c;
+        float d   = length(dv) + 1e-4;
+        float age = u_time - r.z;
+        float w   = sin(d*34. - age*9.) * exp(-age*1.3) * exp(-d*2.0) * r.w;
+        push += dv/d * w * .014;
+        ring += abs(w) * smoothstep(0., .06, age);
       }
     }
 
-    // ── Liquid warp (intro settle + gentle flow) ─────────────────────────
-    float e    = 1.-smoothstep(0.,1.,u_intro);
-    vec2  warp = vec2(sin(uv.y*13.+u_time*2.3),cos(uv.x*11.+u_time*2.0))*.06*e*e;
-    warp      += vec2(sin(uv.y*8.+u_time*.8),cos(uv.x*6.+u_time*.7))*.003;
+    // ── Liquid settle + gentle flow ────────────────────────────────────
+    float e    = 1. - smoothstep(0., 1., u_intro);
+    vec2  warp = vec2(sin(uv.y*13. + u_time*2.3), cos(uv.x*11. + u_time*2.0)) * .06 * e*e;
+    warp      += vec2(sin(uv.y*8.  + u_time*.8),  cos(uv.x*6.  + u_time*.7))  * .003;
 
-    // UV for environment / normal sampling (liquid warp + ripple push only)
     vec2 suv = uv + (push + warp) / asp;
 
-    // UV for TEXT sampling: add physical gyro translation on top
-    vec2 tuv = suv - textOff;
+    // ── Gravity fall: text coordinates slide in tilted direction ───────
+    // Subtraction shifts the rendered characters towards the lower/tilted side
+    vec2 tuv = suv - u_fall;
 
-    // ── Sample mask (sharp) with per-channel chromatic split ─────────────
-    float mR = texture2D(u_mask, tuv + chrDir           ).r;
-    float mG = texture2D(u_mask, tuv                    ).r;
-    float mB = texture2D(u_mask, tuv - chrDir           ).r;
+    // ── Chromatic Aberration: ONLY active when pressing on an area ─────
+    float chrAmt = 0.0;
+    vec2  chrDir = vec2(0.);
+    if (u_press_power > 0.001) {
+      vec2 pressP = (u_press_uv - .5) * asp;
+      vec2 toPress = p - pressP;
+      float dPress = length(toPress);
+      // Radiates outward from touch point with exponential falloff
+      vec2 dir = (dPress > 1e-4) ? normalize(toPress) : vec2(0., 1.);
+      float localSplatter = exp(-dPress * 4.2);
+      float globalFlash   = 0.22;
+      chrAmt = (localSplatter * 0.78 + globalFlash) * u_press_power * 0.024;
+      chrDir = dir * chrAmt;
+    }
+
+    // Sample mask (sharp text edge)
+    float mR = (chrAmt > 1e-5) ? texture2D(u_mask, tuv + chrDir).r : 0.0;
+    float mG = texture2D(u_mask, tuv).r;
+    float mB = (chrAmt > 1e-5) ? texture2D(u_mask, tuv - chrDir).r : 0.0;
     float m  = mG;
 
-    // Sample blur shifted the same way (glow follows text)
-    vec2  ex  = vec2(5.0/u_res.x,0.), ey = vec2(0.,5.0/u_res.y);
-    vec2  dh  = vec2(texture2D(u_blur,tuv+ex).r-texture2D(u_blur,tuv-ex).r,
-                     texture2D(u_blur,tuv+ey).r-texture2D(u_blur,tuv-ey).r);
+    // Sample blur height map (glow & specular follow the falling text)
+    vec2 ex = vec2(5.0/u_res.x, 0.), ey = vec2(0., 5.0/u_res.y);
+    vec2 dh = vec2(texture2D(u_blur, tuv+ex).r - texture2D(u_blur, tuv-ex).r,
+                   texture2D(u_blur, tuv+ey).r - texture2D(u_blur, tuv-ey).r);
 
-    // ── Surface normal → reflectance ─────────────────────────────────────
-    vec2 wob     = vec2(sin(p.x*7.+u_time*.9),cos(p.y*8.+u_time*1.1))*.06;
-    // Gyro tilts the highlight (lean = dramatic specular shift)
-    vec2 gyroN   = u_gyro * 0.22;
-    vec3 n       = normalize(vec3(-dh*5.0+push*38.+wob+gyroN,1.));
-    vec3 rv      = reflect(vec3(0.,0.,-1.),n);
-    rv.xy       += u_light*.75+p*.8;
-    vec3 col     = env(rv);
+    // ── Surface normal & reflections ───────────────────────────────────
+    vec2 wob = vec2(sin(p.x*7. + u_time*.9), cos(p.y*8. + u_time*1.1)) * .06;
+    // Surface normal leans slightly with gravity fall for realistic specular sheen
+    vec2 tiltSheen = u_fall * 0.7;
+    vec3 n = normalize(vec3(-dh*5.0 + push*38. + wob + tiltSheen, 1.));
+    vec3 rv = reflect(vec3(0., 0., -1.), n);
+    rv.xy += u_light*.75 + p*.8;
+    vec3 col = env(rv);
 
-    float edge   = length(dh);
-    float gyroHue= dot(normalize(u_gyro+vec2(.001)),vec2(.3,.7))*gyroMag*.12+u_gyro_speed*.04;
-    col         += pal(u_time*.06+uv.x*.7+gyroHue)*edge*3.2;
+    float edge = length(dh);
+    col += pal(u_time*.06 + uv.x*.7) * edge * 3.2;
 
-    // Per-channel colour for aberration
-    vec3 colR = col*vec3(1.0+chrAmt*8.,1.0,1.0-chrAmt*4.);
-    vec3 colB = col*vec3(1.0-chrAmt*4.,1.0,1.0+chrAmt*8.);
+    // Apply chromatic aberration ONLY if pressing
+    vec3 colR = col;
+    vec3 colB = col;
+    if (chrAmt > 1e-5) {
+      colR = col * vec3(1.0 + chrAmt*14.0, 1.0 - chrAmt*3.0, 1.0 - chrAmt*5.0);
+      colB = col * vec3(1.0 - chrAmt*5.0,  1.0 - chrAmt*3.0, 1.0 + chrAmt*14.0);
+    }
 
-    // ── Background: aura + light orb + ripple rings ──────────────────────
-    float hb = texture2D(u_blur, tuv).r;   // aura also follows text
-    vec2  lp = u_light*asp*.5;
-    vec3  bg = vec3(.02,.02,.035);
-    bg += pal(uv.x*.5+u_time*.04)*hb*.22*(1.-m);
-    bg += vec3(.18,.22,.6)*exp(-length(p-lp)*3.2)*.22;
-    bg += pal(.6+ring*.2+u_time*.04)*ring*.16;
-    bg += pal(u_time*.05+gyroHue)*gyroMag*.07*(1.-m);
+    // ── Background aura + light orb + ripple rings ─────────────────────
+    float hb = texture2D(u_blur, tuv).r;
+    vec2  lp = u_light * asp * .5;
+    vec3  bg = vec3(.02, .02, .035);
+    bg += pal(uv.x*.5 + u_time*.04) * hb * .22 * (1. - m);
+    bg += vec3(.18, .22, .6) * exp(-length(p - lp)*3.2) * .22;
+    bg += pal(.6 + ring*.2 + u_time*.04) * ring * .16;
 
-    float a      = m*smoothstep(0.,.5,u_intro);
-    vec3  final  = mix(bg,col,a);
-    final.r      = mix(bg.r, colR.r, a*(mR*.4+.6));
-    final.b      = mix(bg.b, colB.b, a*(mB*.4+.6));
+    float a = m * smoothstep(0., .5, u_intro);
+    vec3 final = mix(bg, col, a);
+    if (chrAmt > 1e-5) {
+      final.r = mix(bg.r, colR.r, a * (mR*.4 + .6));
+      final.b = mix(bg.b, colB.b, a * (mB*.4 + .6));
+    }
 
-    gl_FragColor = vec4(final,1.);
+    gl_FragColor = vec4(final, 1.);
   }`;
 
-  function sh(type,src){
-    const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
-    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+  function sh(type, src){
+    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
     return s;
   }
-  const prog=gl.createProgram();
-  gl.attachShader(prog,sh(gl.VERTEX_SHADER,VS));
-  gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,FS));
+  const prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
   gl.linkProgram(prog);
-  if(!gl.getProgramParameter(prog,gl.LINK_STATUS)){ document.body.classList.add('nogl'); return; }
+  if(!gl.getProgramParameter(prog, gl.LINK_STATUS)){ document.body.classList.add('nogl'); return; }
   gl.useProgram(prog);
 
-  const buf=gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER,buf);
-  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
-  const loc=gl.getAttribLocation(prog,'a');
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'a');
   gl.enableVertexAttribArray(loc);
-  gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
 
-  const U=n=>gl.getUniformLocation(prog,n);
-  const uMask=U('u_mask'), uBlur=U('u_blur'), uRes=U('u_res'), uLight=U('u_light'),
-        uTime=U('u_time'), uIntro=U('u_intro'), uRip=U('u_rip[0]'),
-        uGyro=U('u_gyro'), uGyroSpeed=U('u_gyro_speed');
+  const U = n => gl.getUniformLocation(prog, n);
+  const uMask       = U('u_mask'),
+        uBlur       = U('u_blur'),
+        uRes        = U('u_res'),
+        uLight      = U('u_light'),
+        uTime       = U('u_time'),
+        uIntro      = U('u_intro'),
+        uFall       = U('u_fall'),
+        uPressUV    = U('u_press_uv'),
+        uPressPower = U('u_press_power'),
+        uRip        = U('u_rip[0]');
 
   /* ── Text textures ─────────────────────────────────────────────────── */
-  const FONT='900 100px "Inter","Helvetica Neue",Arial,sans-serif';
-  const texMask=gl.createTexture(), texBlur=gl.createTexture();
-  let W,H,dpr;
+  const FONT = '900 100px "Inter","Helvetica Neue",Arial,sans-serif';
+  const texMask = gl.createTexture(), texBlur = gl.createTexture();
+  let W, H, dpr;
 
-  function upload(tex,unit,cvs){
-    gl.activeTexture(gl.TEXTURE0+unit);
-    gl.bindTexture(gl.TEXTURE_2D,tex);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
-    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,cvs);
-    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  function upload(tex, unit, cvs){
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cvs);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
   function build(){
-    dpr=Math.min(devicePixelRatio||1,1.75);
-    W=Math.max(1,Math.floor(innerWidth*dpr));
-    H=Math.max(1,Math.floor(innerHeight*dpr));
-    canvas.width=W; canvas.height=H;
-    gl.viewport(0,0,W,H);
+    dpr = Math.min(devicePixelRatio || 1, 1.75);
+    W = Math.max(1, Math.floor(innerWidth * dpr));
+    H = Math.max(1, Math.floor(innerHeight * dpr));
+    canvas.width = W; canvas.height = H;
+    gl.viewport(0, 0, W, H);
 
-    const mk=()=>{const c=document.createElement('canvas');c.width=W;c.height=H;return c;};
-    const a=mk(),x=a.getContext('2d');
-    x.font=FONT;
-    const w100=x.measureText(NAME).width;
-    const fs=Math.min(100*(W*0.82)/w100,H*0.4);
-    const font=FONT.replace('100px',fs+'px');
+    const mk = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; return c; };
+    const a = mk(), x = a.getContext('2d');
+    x.font = FONT;
+    const w100 = x.measureText(NAME).width;
+    const fs = Math.min(100 * (W * 0.82) / w100, H * 0.4);
+    const font = FONT.replace('100px', fs + 'px');
 
-    x.fillStyle='#000'; x.fillRect(0,0,W,H);
-    x.font=font; x.textAlign='center'; x.textBaseline='middle'; x.fillStyle='#fff';
-    x.fillText(NAME,W/2,H/2+fs*0.04);
-    upload(texMask,0,a);
+    x.fillStyle = '#000'; x.fillRect(0, 0, W, H);
+    x.font = font; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillStyle = '#fff';
+    x.fillText(NAME, W / 2, H / 2 + fs * 0.04);
+    upload(texMask, 0, a);
 
-    const b=mk(),y=b.getContext('2d');
-    y.fillStyle='#000'; y.fillRect(0,0,W,H);
-    y.font=font; y.textAlign='center'; y.textBaseline='middle';
-    y.shadowColor='#fff'; y.shadowBlur=fs*0.11; y.shadowOffsetX=W*3; y.fillStyle='#fff';
-    for(let i=0;i<2;i++) y.fillText(NAME,W/2-W*3,H/2+fs*0.04);
-    upload(texBlur,1,b);
+    const b = mk(), y = b.getContext('2d');
+    y.fillStyle = '#000'; y.fillRect(0, 0, W, H);
+    y.font = font; y.textAlign = 'center'; y.textBaseline = 'middle';
+    y.shadowColor = '#fff'; y.shadowBlur = fs * 0.11; y.shadowOffsetX = W * 3; y.fillStyle = '#fff';
+    for(let i=0; i<2; i++) y.fillText(NAME, W / 2 - W * 3, H / 2 + fs * 0.04);
+    upload(texBlur, 1, b);
 
-    gl.uniform1i(uMask,0); gl.uniform1i(uBlur,1);
-    gl.uniform2f(uRes,W,H);
+    gl.uniform1i(uMask, 0); gl.uniform1i(uBlur, 1);
+    gl.uniform2f(uRes, W, H);
   }
-  addEventListener('resize',build);
+  addEventListener('resize', build);
 
-  /* ── Input ─────────────────────────────────────────────────────────── */
-  const rip=new Float32Array(32);
-  let ripI=0,lastRip=0;
-  const tgt={x:0,y:0},cur={x:0,y:0};
-  let lastInput=-1e9,baseBeta=null,tiltActive=false,down=false;
-  const t0=performance.now();
-  const T=()=>(performance.now()-t0)/1000;
+  /* ── Input & Physics state ─────────────────────────────────────────── */
+  const rip = new Float32Array(32);
+  let ripI = 0, lastRip = 0;
+  const tgt = { x: 0, y: 0 }, cur = { x: 0, y: 0 };
+  let lastInput = -1e9, baseBeta = null, tiltActive = false, down = false;
+  const t0 = performance.now();
+  let prevTime = t0;
+  const T = () => (performance.now() - t0) / 1000;
 
-  // Gyro state — separate from the light-position target so they
-  // can be smoothed independently
-  const gyro={
-    raw:{x:0,y:0},   // latest device reading
-    cur:{x:0,y:0},   // smoothed (sent to shader)
-    prv:{x:0,y:0},   // previous frame (for speed)
-    speed:0,
-    lastRipple:0,
-    ripDebt:0,
-    active:false
-  };
+  // Optimized gravity slide physics (characters fall towards tilted side)
+  const MAX_TRAVEL = 0.22; // Maximum travel distance (22% of screen)
+  let targetFallX = 0, targetFallY = 0;
+  let fallX = 0, fallY = 0;
+  let velFallX = 0, velFallY = 0;
 
-  function addRipple(cx,cy,amp){
-    const t=T();
-    rip[ripI*4]=cx/innerWidth; rip[ripI*4+1]=1-cy/innerHeight;
-    rip[ripI*4+2]=t; rip[ripI*4+3]=amp;
-    ripI=(ripI+1)%8; lastRip=t;
+  // Press interaction state (for touch-only chromatic aberration)
+  let isPressing = false;
+  let pressPower = 0.0;
+  const pressUV = { x: 0.5, y: 0.5 };
+
+  function addRipple(cx, cy, amp){
+    const t = T();
+    rip[ripI*4]   = cx / innerWidth;
+    rip[ripI*4+1] = 1 - cy / innerHeight;
+    rip[ripI*4+2] = t;
+    rip[ripI*4+3] = amp;
+    ripI = (ripI + 1) % 8;
+    lastRip = t;
   }
 
   function aim(e){
-    if(!tiltActive){ tgt.x=(e.clientX/innerWidth)*2-1; tgt.y=-((e.clientY/innerHeight)*2-1); }
-    lastInput=performance.now();
-  }
-  addEventListener('pointermove',e=>{
-    aim(e);
-    if(T()-lastRip>(down?.07:.16)) addRipple(e.clientX,e.clientY,down?.55:.22);
-  });
-  addEventListener('pointerdown',e=>{ down=true; aim(e); addRipple(e.clientX,e.clientY,1.4); askTilt(); });
-  addEventListener('pointerup',()=>{ down=false; });
-  addEventListener('pointercancel',()=>{ down=false; });
-
-  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-
-  function onTilt(e){
-    if(e.gamma==null) return;
-    if(baseBeta===null) baseBeta=e.beta;
-    tiltActive=true; gyro.active=true;
-    lastInput=performance.now();
-
-    // gamma: left/right lean  (-90..+90 deg normally) → map ±25° to ±1
-    // beta:  forward/back tilt relative to calibrated zero → map ±25° to ±1
-    const nx=clamp(e.gamma/25,-1,1);
-    const ny=clamp(-(e.beta-baseBeta)/25,-1,1);
-
-    gyro.raw.x=nx; gyro.raw.y=ny;
-
-    // Also drive the light target from gyro
-    tgt.x=nx; tgt.y=ny;
-
-    // Velocity-triggered ripples (fast jerk = burst)
-    const vx=nx-gyro.cur.x, vy=ny-gyro.cur.y;
-    const spd=Math.sqrt(vx*vx+vy*vy)*60;
-    gyro.ripDebt+=spd*0.012;
-    const t=T();
-    if(gyro.ripDebt>0.25 && t-gyro.lastRipple>0.22){
-      gyro.ripDebt=0; gyro.lastRipple=t;
-      addRipple(innerWidth*(0.5+nx*0.4), innerHeight*(0.5-ny*0.4),
-                Math.min(spd*0.7,2.0));
-      if(spd>0.5){
-        setTimeout(()=>addRipple(
-          innerWidth *(0.5+nx*0.25+(Math.random()-.5)*0.3),
-          innerHeight*(0.5-ny*0.25+(Math.random()-.5)*0.3),
-          spd*0.35),110);
-      }
+    if(!tiltActive){
+      tgt.x = (e.clientX / innerWidth) * 2 - 1;
+      tgt.y = -((e.clientY / innerHeight) * 2 - 1);
     }
+    lastInput = performance.now();
+  }
+
+  function setPress(e, active){
+    isPressing = active;
+    pressUV.x = e.clientX / innerWidth;
+    pressUV.y = 1.0 - (e.clientY / innerHeight);
+  }
+
+  addEventListener('pointermove', e => {
+    aim(e);
+    if(isPressing){
+      pressUV.x = e.clientX / innerWidth;
+      pressUV.y = 1.0 - (e.clientY / innerHeight);
+    }
+    if(T() - lastRip > (down ? .07 : .16)) addRipple(e.clientX, e.clientY, down ? .55 : .22);
+  });
+
+  addEventListener('pointerdown', e => {
+    down = true;
+    setPress(e, true);
+    aim(e);
+    addRipple(e.clientX, e.clientY, 1.4);
+    askTilt();
+  });
+
+  addEventListener('pointerup', () => { down = false; isPressing = false; });
+  addEventListener('pointercancel', () => { down = false; isPressing = false; });
+
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  // Device orientation / Gyroscope
+  function onTilt(e){
+    if (e.gamma == null || e.beta == null) return;
+    if (baseBeta === null) {
+      baseBeta = e.beta;
+    } else {
+      // Gently adapt resting posture over time
+      baseBeta += (e.beta - baseBeta) * 0.003;
+    }
+    tiltActive = true;
+    lastInput = performance.now();
+
+    // Gamma: left/right roll (-90 to +90).
+    // Tilt right (gamma > 0) -> characters fall RIGHT (targetFallX > 0)
+    // Tilt left  (gamma < 0) -> characters fall LEFT  (targetFallX < 0)
+    const normX = clamp(e.gamma / 26, -1, 1);
+
+    // Beta: pitch relative to baseline.
+    // Tilt top away/down (beta < baseBeta) -> characters fall towards TOP (targetFallY > 0)
+    // Tilt bottom down   (beta > baseBeta) -> characters fall towards BOTTOM (targetFallY < 0)
+    const normY = clamp(-(e.beta - baseBeta) / 26, -1, 1);
+
+    targetFallX = normX * MAX_TRAVEL;
+    targetFallY = normY * MAX_TRAVEL;
+
+    // Steer light reflection with tilt
+    tgt.x = normX;
+    tgt.y = normY;
+
     document.getElementById('gyro-hint').classList.add('hide');
   }
 
-  let tiltAsked=false;
+  let tiltAsked = false;
   function askTilt(){
-    if(tiltAsked||!('DeviceOrientationEvent' in window)) return;
-    tiltAsked=true;
-    if(typeof DeviceOrientationEvent.requestPermission==='function'){
+    if(tiltAsked || !('DeviceOrientationEvent' in window)) return;
+    tiltAsked = true;
+    if(typeof DeviceOrientationEvent.requestPermission === 'function'){
       DeviceOrientationEvent.requestPermission()
-        .then(s=>{ if(s==='granted') addEventListener('deviceorientation',onTilt); })
-        .catch(()=>{});
+        .then(s => { if(s === 'granted') addEventListener('deviceorientation', onTilt); })
+        .catch(() => {});
     } else {
-      addEventListener('deviceorientation',onTilt);
+      addEventListener('deviceorientation', onTilt);
     }
   }
-  if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission!=='function'){
+
+  if(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission !== 'function'){
     askTilt();
-    setTimeout(()=>{ if(!gyro.active) document.getElementById('gyro-hint').classList.add('hide'); },4000);
+    setTimeout(() => { if(!tiltActive) document.getElementById('gyro-hint').classList.add('hide'); }, 4000);
   } else {
-    document.getElementById('gyro-hint').textContent='Tap to enable tilt';
+    document.getElementById('gyro-hint').textContent = 'Tap to enable tilt';
   }
 
-  /* ── Render loop ───────────────────────────────────────────────────── */
-  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /* ── Render Loop ───────────────────────────────────────────────────── */
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  function frame(){
-    const t=T();
+  function frame(now){
+    const dt = Math.min((now - prevTime) / 1000, 0.05) || 0.016;
+    prevTime = now;
+    const t = T();
 
-    // Idle auto-animation
-    if(performance.now()-lastInput>2500&&!reduce){
-      tgt.x=Math.sin(t*.6)*.8; tgt.y=Math.cos(t*.45)*.5;
-      if(t-lastRip>3.2) addRipple(innerWidth*(.2+Math.random()*.6),innerHeight*(.3+Math.random()*.4),.5);
+    // Idle auto-drift for light orb when inactive
+    if(now - lastInput > 2500 && !reduce){
+      tgt.x = Math.sin(t * .6) * .8;
+      tgt.y = Math.cos(t * .45) * .5;
+      if(t - lastRip > 3.2) addRipple(innerWidth*(.2+Math.random()*.6), innerHeight*(.3+Math.random()*.4), .5);
     }
 
-    // Smooth light position
-    cur.x+=(tgt.x-cur.x)*.07; cur.y+=(tgt.y-cur.y)*.07;
+    cur.x += (tgt.x - cur.x) * .07;
+    cur.y += (tgt.y - cur.y) * .07;
 
-    // Smooth gyro — slightly slower for a weighty, inertial feel
-    gyro.prv.x=gyro.cur.x; gyro.prv.y=gyro.cur.y;
-    gyro.cur.x+=(gyro.raw.x-gyro.cur.x)*0.08;
-    gyro.cur.y+=(gyro.raw.y-gyro.cur.y)*0.08;
-    const gspd=Math.sqrt(
-      (gyro.cur.x-gyro.prv.x)**2+(gyro.cur.y-gyro.prv.y)**2)*60;
+    // Smooth Spring Physics for gravity fall (realistic liquid inertia)
+    const springK = 18.0;
+    const damping = 6.2;
+    const ax = (targetFallX - fallX) * springK - velFallX * damping;
+    const ay = (targetFallY - fallY) * springK - velFallY * damping;
+    velFallX += ax * dt;
+    velFallY += ay * dt;
+    fallX += velFallX * dt;
+    fallY += velFallY * dt;
 
-    gl.uniform1f(uTime,t);
-    gl.uniform1f(uIntro,clamp(t/2.8,0,1));
-    gl.uniform2f(uLight,cur.x,cur.y);
-    gl.uniform4fv(uRip,rip);
-    gl.uniform2f(uGyro,gyro.cur.x,gyro.cur.y);
-    gl.uniform1f(uGyroSpeed,Math.min(gspd*.5,1.0));
+    // Animate press power (instant attack, fluid smooth release)
+    const targetPower = isPressing ? 1.0 : 0.0;
+    const powerSpeed = isPressing ? 18.0 : 8.0;
+    pressPower += (targetPower - pressPower) * (powerSpeed * dt);
+    if(pressPower < 0.001) pressPower = 0.0;
 
-    gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+    // Uniforms
+    gl.uniform1f(uTime, t);
+    gl.uniform1f(uIntro, clamp(t / 2.8, 0, 1));
+    gl.uniform2f(uLight, cur.x, cur.y);
+    gl.uniform4fv(uRip, rip);
+
+    // Gravity fall vector
+    gl.uniform2f(uFall, fallX, fallY);
+
+    // Chromatic aberration (strictly press-activated)
+    gl.uniform2f(uPressUV, pressUV.x, pressUV.y);
+    gl.uniform1f(uPressPower, pressPower);
+
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     requestAnimationFrame(frame);
   }
 
-  (document.fonts&&document.fonts.load?document.fonts.load('900 100px Inter').catch(()=>{}):Promise.resolve())
-    .finally(()=>{ build(); requestAnimationFrame(frame); });
+  (document.fonts && document.fonts.load ? document.fonts.load('900 100px Inter').catch(() => {}) : Promise.resolve())
+    .finally(() => { build(); requestAnimationFrame(frame); });
 })();
 </script>
 </body>
