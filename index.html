@@ -1,437 +1,1298 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>RFernz</title>
-<meta name="description" content="RFernz">
-<meta name="theme-color" content="#050508">
-<meta property="og:title" content="RFernz">
-<style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  html,body { height:100%; background:#050508; overflow:hidden; overscroll-behavior:none; }
-  body { touch-action:none; -webkit-tap-highlight-color:transparent; user-select:none; -webkit-user-select:none; }
-  canvas { position:fixed; inset:0; width:100%; height:100%; display:block; }
-  h1 { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
-  body.nogl h1 { position:fixed; inset:0; width:auto; height:auto; clip:auto; display:grid; place-items:center;
-    font:800 min(25vw,30vh)/1 "Helvetica Neue",Arial,sans-serif; color:#e8ecff; letter-spacing:-.02em; }
-  .grain { position:fixed; inset:-50%; pointer-events:none; opacity:.05;
-    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
-    animation:g 1s steps(6) infinite; }
-  @keyframes g { 0%{transform:translate(0,0)} 20%{transform:translate(-4%,3%)} 40%{transform:translate(3%,-5%)} 60%{transform:translate(-5%,-2%)} 80%{transform:translate(4%,4%)} 100%{transform:translate(0,0)} }
-  @media (prefers-reduced-motion: reduce) { .grain{animation:none} }
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>RFernz</title>
+  <meta name="description" content="Rohit Fenantez — Creative Developer.">
+  <meta name="theme-color" content="#EFEEEB">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Funnel+Display:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #EFEEEB;
+      --ink: #0A0A0A;
+      --ghost: #D4D2C9;
+      --muted: #6B6862;
+      --chip-border: #B8B5B0;
+      --rule: #CCC9C4;
+      --sig-height: 82px;
+      --mask-stroke: 18;
+      --margin-x: clamp(24px, 4.444vw, 64px);
+    }
 
-  #gyro-hint {
-    position: fixed;
-    bottom: 28px;
-    left: 50%;
-    transform: translateX(-50%);
-    font: 500 11px/1.4 "Helvetica Neue", Arial, sans-serif;
-    color: rgba(180,200,255,0.55);
-    letter-spacing: .08em;
-    text-transform: uppercase;
-    pointer-events: none;
-    opacity: 1;
-    transition: opacity 1.8s ease;
-  }
-  #gyro-hint.hide { opacity: 0; }
-</style>
-</head>
-<body>
-<h1>RFernz</h1>
-<canvas id="gl"></canvas>
-<div class="grain"></div>
-<div id="gyro-hint">Tilt your phone</div>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
 
-<script>
-(() => {
-  const NAME = "RFernz";
+    html {
+      scroll-behavior: smooth;
+    }
 
-  const canvas = document.getElementById('gl');
-  const gl = canvas.getContext('webgl', { antialias: false, alpha: false, powerPreference: 'high-performance' });
-  if (!gl) { document.body.classList.add('nogl'); return; }
+    html, body {
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Funnel Display", "Archivo", "Helvetica Neue", Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      overflow-x: clip;
+      -webkit-tap-highlight-color: transparent;
+    }
 
-  const VS = `attribute vec2 a; varying vec2 v_uv; void main(){ v_uv=a*.5+.5; gl_Position=vec4(a,0.,1.); }`;
+    html.is-loading,
+    html.is-loading body {
+      overflow: hidden;
+      height: 100%;
+    }
 
-  const FS = `
-  #ifdef GL_FRAGMENT_PRECISION_HIGH
-  precision highp float;
-  #else
-  precision mediump float;
-  #endif
+    /* ── Opening Signature Loader (Preserved) ──────────────────────────── */
+    .loader {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: grid;
+      place-items: center;
+      background: var(--bg);
+      will-change: transform, border-radius;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      cursor: pointer;
+    }
 
-  uniform sampler2D u_mask, u_blur;
-  uniform vec2  u_res, u_light;
-  uniform float u_time, u_intro;
+    .loader__sig {
+      position: relative;
+      display: grid;
+      place-items: center;
+      will-change: transform, opacity;
+    }
 
-  // Physics fall offset from phone tilt (X: roll, Y: pitch)
-  uniform vec2  u_fall;
+    .signature {
+      display: block;
+      height: var(--sig-height);
+      width: auto;
+      overflow: visible;
+    }
 
-  // Press interaction for localized chromatic aberration
-  uniform vec2  u_press_uv;
-  uniform float u_press_power;
+    .loader__ghost {
+      color: var(--ghost);
+    }
 
-  uniform vec4  u_rip[8];
-  varying vec2  v_uv;
+    .loader__draw {
+      position: absolute;
+      inset: 0;
+      color: var(--ink);
+    }
 
-  vec3 pal(float t){ return .5+.5*cos(6.28318*(t+vec3(0.,.33,.67))); }
+    .sig-mask-path {
+      fill: none;
+      stroke: #ffffff;
+      stroke-width: var(--mask-stroke);
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
 
-  vec3 env(vec3 r){
-    float band  = sin(r.y*7.0+r.x*4.0+u_time*.35)*.5+.5;
-    float band2 = sin(r.x*9.0-r.y*3.0-u_time*.2 )*.5+.5;
-    vec3 base = mix(vec3(.02,.03,.08),vec3(.92,.96,1.),smoothstep(.38,.62,band));
-    base *= .3+.7*smoothstep(-.7,.9,r.y);
-    vec3 irid = pal(band*.55+band2*.35+r.x*.2+u_time*.03)*.95;
-    float hl = pow(max(dot(normalize(r),normalize(vec3(.4,.7,.6))),0.),22.)*1.6;
-    return mix(base,irid,.5)+hl;
-  }
+    .sig-mask-path.stem {
+      stroke-width: 15;
+    }
 
-  void main(){
-    vec2 uv  = v_uv;
-    vec2 asp = vec2(u_res.x/u_res.y, 1.);
-    vec2 p   = (uv - .5) * asp;
+    .sig-mask-path.tail {
+      stroke-width: 22;
+    }
 
-    // ── Touch / click ripples ──────────────────────────────────────────
-    vec2  push = vec2(0.);
-    float ring = 0.;
-    for(int i=0;i<8;i++){
-      vec4 r = u_rip[i];
-      if(r.w > 0.){
-        vec2  c   = (r.xy - .5) * asp;
-        vec2  dv  = p - c;
-        float d   = length(dv) + 1e-4;
-        float age = u_time - r.z;
-        float w   = sin(d*34. - age*9.) * exp(-age*1.3) * exp(-d*2.0) * r.w;
-        push += dv/d * w * .014;
-        ring += abs(w) * smoothstep(0., .06, age);
+    /* ── Top Navbar (Signature Logo + Minimal Nav) ─────────────────────── */
+    .main-header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      z-index: 20;
+      color: var(--ink);
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .main-header-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 24px var(--margin-x);
+      pointer-events: auto;
+    }
+
+    .nav-logo {
+      display: inline-flex;
+      align-items: center;
+      color: var(--ink);
+      text-decoration: none;
+      transition: opacity 0.25s ease;
+    }
+
+    .nav-logo:hover {
+      opacity: 0.6;
+    }
+
+    .nav-logo svg {
+      height: 34px;
+      width: auto;
+      display: block;
+    }
+
+    .main-nav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px;
+      border: 1px solid rgba(10, 10, 10, 0.16);
+      background: rgba(239, 238, 235, 0.25);
+      backdrop-filter: blur(8px);
+    }
+
+    .nav-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 32px;
+      padding: 0 8px;
+      background: rgba(239, 238, 235, 0.45);
+      border: 1px solid rgba(10, 10, 10, 0.28);
+      border-radius: 0;
+      color: var(--ink);
+      font-family: "Archivo", "Helvetica Neue", Arial, sans-serif;
+      font-weight: 500;
+      font-size: clamp(0.6875rem, 0.8vw, 0.75rem);
+      line-height: 1;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+      text-decoration: none;
+      transition:
+        border-color 0.3s ease,
+        background-color 0.3s ease,
+        padding 0.36s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .nav-icon {
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
+      display: block;
+    }
+
+    .nav-label-wrap {
+      display: grid;
+      grid-template-columns: 0fr;
+      margin-left: 0;
+      transition:
+        grid-template-columns 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+        margin-left 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .nav-label {
+      overflow: hidden;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 0.24s ease;
+    }
+
+    .nav-btn:hover,
+    .nav-btn:focus-visible {
+      border-color: var(--ink);
+      background: rgba(239, 238, 235, 0.9);
+      padding: 0 12px;
+      outline: none;
+    }
+
+    .nav-btn:hover .nav-label-wrap,
+    .nav-btn:focus-visible .nav-label-wrap {
+      grid-template-columns: 1fr;
+      margin-left: 8px;
+    }
+
+    .nav-btn:hover .nav-label,
+    .nav-btn:focus-visible .nav-label {
+      opacity: 1;
+    }
+
+    /* ── Hero Section (Pamidor Reference Layout) ───────────────────────── */
+    .hero {
+      position: relative;
+      width: 100%;
+      min-height: 100dvh;
+      background: var(--bg);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+    }
+
+    /* Full-bleed Portrait on Right Half (Desktop) */
+    .hero-portrait-wrap {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+      opacity: 0;
+      will-change: transform, opacity;
+      overflow: hidden;
+    }
+
+    .hero-portrait {
+      position: absolute;
+      inset: -40px;
+      width: calc(100% + 80px);
+      height: calc(100% + 80px);
+      object-fit: cover;
+      object-position: center 22%;
+      display: block;
+      will-change: transform, filter;
+    }
+
+    /* Bottom Full-Width Name */
+    .hero-content {
+      position: relative;
+      z-index: 2;
+      width: 100%;
+      padding: 0 var(--margin-x) clamp(20px, 2.6vw, 40px);
+      mix-blend-mode: difference;
+    }
+
+    .hero-text-col {
+      width: 100%;
+      max-width: none;
+    }
+
+    .hg-1-wrapper {
+      will-change: transform;
+      width: 100%;
+    }
+
+    .hg-1 {
+      font-family: "Funnel Display", "Archivo", "Helvetica Neue", Arial, sans-serif;
+      font-weight: 500;
+      font-size: clamp(2.1rem, 13.4vw, 13.4rem);
+      line-height: 0.88;
+      letter-spacing: -0.035em;
+      color: #EFEEEB;
+      display: flex;
+      justify-content: center;
+      gap: 0.22em;
+      align-items: baseline;
+      width: 100%;
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    .hg-1 .name-line {
+      display: inline-block;
+      white-space: nowrap;
+    }
+
+    .hg-1 .char-clip {
+      display: inline-block;
+      overflow: hidden;
+      vertical-align: top;
+      padding-bottom: 0.08em;
+      margin-bottom: -0.08em;
+    }
+
+    .hero.is-settled .hg-1 .char-clip {
+      overflow: visible;
+    }
+
+    .hg-1 .char {
+      display: inline-block;
+      will-change: transform, opacity, filter;
+    }
+
+    /* ── Responsive (< 1024px / Mobile) ────────────────────────────────── */
+    @media (max-width: 1023px) {
+      .hero {
+        justify-content: space-between;
+      }
+
+      .hero-portrait-wrap {
+        position: relative;
+        inset: auto;
+        width: 100%;
+        height: 54dvh;
+        min-height: 320px;
+        max-height: 500px;
+        margin-top: 72px;
+      }
+
+      .hero-portrait {
+        position: static;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: center 20%;
+        -webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
+        mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
+      }
+
+      .hero-portrait-wrap::after {
+        background: linear-gradient(
+          180deg,
+          rgba(239, 238, 235, 0) 65%,
+          var(--bg) 100%
+        );
+      }
+
+      .hero-content {
+        padding: 16px var(--margin-x) clamp(24px, 5vw, 40px);
+      }
+
+      .hero-text-col {
+        max-width: 100%;
+      }
+
+      .hg-1 {
+        font-size: clamp(1.85rem, 11.4vw, 5.8rem);
       }
     }
 
-    // ── Liquid settle + gentle flow ────────────────────────────────────
-    float e    = 1. - smoothstep(0., 1., u_intro);
-    vec2  warp = vec2(sin(uv.y*13. + u_time*2.3), cos(uv.x*11. + u_time*2.0)) * .06 * e*e;
-    warp      += vec2(sin(uv.y*8.  + u_time*.8),  cos(uv.x*6.  + u_time*.7))  * .003;
+    @media (max-width: 600px) {
+      .main-header-inner {
+        padding: 18px 20px;
+      }
 
-    vec2 suv = uv + (push + warp) / asp;
+      .nav-logo svg {
+        height: 28px;
+      }
 
-    // ── Gravity fall: text coordinates slide in tilted direction ───────
-    // Subtraction shifts the rendered characters towards the lower/tilted side
-    vec2 tuv = suv - u_fall;
+      .main-nav {
+        gap: 14px;
+      }
 
-    // ── Chromatic Aberration: ONLY active when pressing on an area ─────
-    float chrAmt = 0.0;
-    vec2  chrDir = vec2(0.);
-    if (u_press_power > 0.001) {
-      vec2 pressP = (u_press_uv - .5) * asp;
-      vec2 toPress = p - pressP;
-      float dPress = length(toPress);
-      // Radiates outward from touch point with exponential falloff
-      vec2 dir = (dPress > 1e-4) ? normalize(toPress) : vec2(0., 1.);
-      float localSplatter = exp(-dPress * 4.2);
-      float globalFlash   = 0.22;
-      chrAmt = (localSplatter * 0.78 + globalFlash) * u_press_power * 0.024;
-      chrDir = dir * chrAmt;
+      .hero-portrait-wrap {
+        height: 50dvh;
+        min-height: 280px;
+        margin-top: 64px;
+      }
     }
 
-    // Sample mask (sharp text edge)
-    float mR = (chrAmt > 1e-5) ? texture2D(u_mask, tuv + chrDir).r : 0.0;
-    float mG = texture2D(u_mask, tuv).r;
-    float mB = (chrAmt > 1e-5) ? texture2D(u_mask, tuv - chrDir).r : 0.0;
-    float m  = mG;
+    @media (prefers-reduced-motion: reduce) {
+      .loader,
+      .loader__sig,
+      .hg-1 .char,
+      .hero-portrait-wrap {
+        transition: none !important;
+        animation: none !important;
+      }
 
-    // Sample blur height map (glow & specular follow the falling text)
-    vec2 ex = vec2(5.0/u_res.x, 0.), ey = vec2(0., 5.0/u_res.y);
-    vec2 dh = vec2(texture2D(u_blur, tuv+ex).r - texture2D(u_blur, tuv-ex).r,
-                   texture2D(u_blur, tuv+ey).r - texture2D(u_blur, tuv-ey).r);
-
-    // ── Surface normal & reflections ───────────────────────────────────
-    vec2 wob = vec2(sin(p.x*7. + u_time*.9), cos(p.y*8. + u_time*1.1)) * .06;
-    // Surface normal leans slightly with gravity fall for realistic specular sheen
-    vec2 tiltSheen = u_fall * 0.7;
-    vec3 n = normalize(vec3(-dh*5.0 + push*38. + wob + tiltSheen, 1.));
-    vec3 rv = reflect(vec3(0., 0., -1.), n);
-    rv.xy += u_light*.75 + p*.8;
-    vec3 col = env(rv);
-
-    float edge = length(dh);
-    col += pal(u_time*.06 + uv.x*.7) * edge * 3.2;
-
-    // Apply chromatic aberration ONLY if pressing
-    vec3 colR = col;
-    vec3 colB = col;
-    if (chrAmt > 1e-5) {
-      colR = col * vec3(1.0 + chrAmt*14.0, 1.0 - chrAmt*3.0, 1.0 - chrAmt*5.0);
-      colB = col * vec3(1.0 - chrAmt*5.0,  1.0 - chrAmt*3.0, 1.0 + chrAmt*14.0);
+      .about-lead [data-char] {
+        color: var(--ink) !important;
+        animation: none !important;
+      }
     }
 
-    // ── Background aura + light orb + ripple rings ─────────────────────
-    float hb = texture2D(u_blur, tuv).r;
-    vec2  lp = u_light * asp * .5;
-    vec3  bg = vec3(.02, .02, .035);
-    bg += pal(uv.x*.5 + u_time*.04) * hb * .22 * (1. - m);
-    bg += vec3(.18, .22, .6) * exp(-length(p - lp)*3.2) * .22;
-    bg += pal(.6 + ring*.2 + u_time*.04) * ring * .16;
-
-    float a = m * smoothstep(0., .5, u_intro);
-    vec3 final = mix(bg, col, a);
-    if (chrAmt > 1e-5) {
-      final.r = mix(bg.r, colR.r, a * (mR*.4 + .6));
-      final.b = mix(bg.b, colB.b, a * (mB*.4 + .6));
+    /* ── About / Story Section (Pamidor Reference) ─────────────────────── */
+    .about-section {
+      position: relative;
+      width: 100%;
+      min-height: 185dvh;
+      background: var(--bg);
     }
 
-    gl_FragColor = vec4(final, 1.);
-  }`;
-
-  function sh(type, src){
-    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
-    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
-    return s;
-  }
-  const prog = gl.createProgram();
-  gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
-  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
-  gl.linkProgram(prog);
-  if(!gl.getProgramParameter(prog, gl.LINK_STATUS)){ document.body.classList.add('nogl'); return; }
-  gl.useProgram(prog);
-
-  const buf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
-  const loc = gl.getAttribLocation(prog, 'a');
-  gl.enableVertexAttribArray(loc);
-  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-
-  const U = n => gl.getUniformLocation(prog, n);
-  const uMask       = U('u_mask'),
-        uBlur       = U('u_blur'),
-        uRes        = U('u_res'),
-        uLight      = U('u_light'),
-        uTime       = U('u_time'),
-        uIntro      = U('u_intro'),
-        uFall       = U('u_fall'),
-        uPressUV    = U('u_press_uv'),
-        uPressPower = U('u_press_power'),
-        uRip        = U('u_rip[0]');
-
-  /* ── Text textures ─────────────────────────────────────────────────── */
-  const FONT = '900 100px "Inter","Helvetica Neue",Arial,sans-serif';
-  const texMask = gl.createTexture(), texBlur = gl.createTexture();
-  let W, H, dpr;
-
-  function upload(tex, unit, cvs){
-    gl.activeTexture(gl.TEXTURE0 + unit);
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cvs);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  }
-
-  function build(){
-    dpr = Math.min(devicePixelRatio || 1, 1.75);
-    W = Math.max(1, Math.floor(innerWidth * dpr));
-    H = Math.max(1, Math.floor(innerHeight * dpr));
-    canvas.width = W; canvas.height = H;
-    gl.viewport(0, 0, W, H);
-
-    const mk = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; return c; };
-    const a = mk(), x = a.getContext('2d');
-    x.font = FONT;
-    const w100 = x.measureText(NAME).width;
-    const fs = Math.min(100 * (W * 0.82) / w100, H * 0.4);
-    const font = FONT.replace('100px', fs + 'px');
-
-    x.fillStyle = '#000'; x.fillRect(0, 0, W, H);
-    x.font = font; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillStyle = '#fff';
-    x.fillText(NAME, W / 2, H / 2 + fs * 0.04);
-    upload(texMask, 0, a);
-
-    const b = mk(), y = b.getContext('2d');
-    y.fillStyle = '#000'; y.fillRect(0, 0, W, H);
-    y.font = font; y.textAlign = 'center'; y.textBaseline = 'middle';
-    y.shadowColor = '#fff'; y.shadowBlur = fs * 0.11; y.shadowOffsetX = W * 3; y.fillStyle = '#fff';
-    for(let i=0; i<2; i++) y.fillText(NAME, W / 2 - W * 3, H / 2 + fs * 0.04);
-    upload(texBlur, 1, b);
-
-    gl.uniform1i(uMask, 0); gl.uniform1i(uBlur, 1);
-    gl.uniform2f(uRes, W, H);
-  }
-  addEventListener('resize', build);
-
-  /* ── Input & Physics state ─────────────────────────────────────────── */
-  const rip = new Float32Array(32);
-  let ripI = 0, lastRip = 0;
-  const tgt = { x: 0, y: 0 }, cur = { x: 0, y: 0 };
-  let lastInput = -1e9, baseBeta = null, tiltActive = false, down = false;
-  const t0 = performance.now();
-  let prevTime = t0;
-  const T = () => (performance.now() - t0) / 1000;
-
-  // Optimized gravity slide physics (characters fall towards tilted side)
-  const MAX_TRAVEL = 0.22; // Maximum travel distance (22% of screen)
-  let targetFallX = 0, targetFallY = 0;
-  let fallX = 0, fallY = 0;
-  let velFallX = 0, velFallY = 0;
-
-  // Press interaction state (for touch-only chromatic aberration)
-  let isPressing = false;
-  let pressPower = 0.0;
-  const pressUV = { x: 0.5, y: 0.5 };
-
-  function addRipple(cx, cy, amp){
-    const t = T();
-    rip[ripI*4]   = cx / innerWidth;
-    rip[ripI*4+1] = 1 - cy / innerHeight;
-    rip[ripI*4+2] = t;
-    rip[ripI*4+3] = amp;
-    ripI = (ripI + 1) % 8;
-    lastRip = t;
-  }
-
-  function aim(e){
-    if(!tiltActive){
-      tgt.x = (e.clientX / innerWidth) * 2 - 1;
-      tgt.y = -((e.clientY / innerHeight) * 2 - 1);
-    }
-    lastInput = performance.now();
-  }
-
-  function setPress(e, active){
-    isPressing = active;
-    pressUV.x = e.clientX / innerWidth;
-    pressUV.y = 1.0 - (e.clientY / innerHeight);
-  }
-
-  addEventListener('pointermove', e => {
-    aim(e);
-    if(isPressing){
-      pressUV.x = e.clientX / innerWidth;
-      pressUV.y = 1.0 - (e.clientY / innerHeight);
-    }
-    if(T() - lastRip > (down ? .07 : .16)) addRipple(e.clientX, e.clientY, down ? .55 : .22);
-  });
-
-  addEventListener('pointerdown', e => {
-    down = true;
-    setPress(e, true);
-    aim(e);
-    addRipple(e.clientX, e.clientY, 1.4);
-    askTilt();
-  });
-
-  addEventListener('pointerup', () => { down = false; isPressing = false; });
-  addEventListener('pointercancel', () => { down = false; isPressing = false; });
-
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-
-  // Device orientation / Gyroscope
-  function onTilt(e){
-    if (e.gamma == null || e.beta == null) return;
-    if (baseBeta === null) {
-      baseBeta = e.beta;
-    } else {
-      // Gently adapt resting posture over time
-      baseBeta += (e.beta - baseBeta) * 0.003;
-    }
-    tiltActive = true;
-    lastInput = performance.now();
-
-    // Gamma: left/right roll (-90 to +90).
-    // Tilt right (gamma > 0) -> characters fall RIGHT (targetFallX > 0)
-    // Tilt left  (gamma < 0) -> characters fall LEFT  (targetFallX < 0)
-    const normX = clamp(e.gamma / 26, -1, 1);
-
-    // Beta: pitch relative to baseline.
-    // Tilt top away/down (beta < baseBeta) -> characters fall towards TOP (targetFallY > 0)
-    // Tilt bottom down   (beta > baseBeta) -> characters fall towards BOTTOM (targetFallY < 0)
-    const normY = clamp(-(e.beta - baseBeta) / 26, -1, 1);
-
-    targetFallX = normX * MAX_TRAVEL;
-    targetFallY = normY * MAX_TRAVEL;
-
-    // Steer light reflection with tilt
-    tgt.x = normX;
-    tgt.y = normY;
-
-    document.getElementById('gyro-hint').classList.add('hide');
-  }
-
-  let tiltAsked = false;
-  function askTilt(){
-    if(tiltAsked || !('DeviceOrientationEvent' in window)) return;
-    tiltAsked = true;
-    if(typeof DeviceOrientationEvent.requestPermission === 'function'){
-      DeviceOrientationEvent.requestPermission()
-        .then(s => { if(s === 'granted') addEventListener('deviceorientation', onTilt); })
-        .catch(() => {});
-    } else {
-      addEventListener('deviceorientation', onTilt);
-    }
-  }
-
-  if(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission !== 'function'){
-    askTilt();
-    setTimeout(() => { if(!tiltActive) document.getElementById('gyro-hint').classList.add('hide'); }, 4000);
-  } else {
-    document.getElementById('gyro-hint').textContent = 'Tap to enable tilt';
-  }
-
-  /* ── Render Loop ───────────────────────────────────────────────────── */
-  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-  function frame(now){
-    const dt = Math.min((now - prevTime) / 1000, 0.05) || 0.016;
-    prevTime = now;
-    const t = T();
-
-    // Idle auto-drift for light orb when inactive
-    if(now - lastInput > 2500 && !reduce){
-      tgt.x = Math.sin(t * .6) * .8;
-      tgt.y = Math.cos(t * .45) * .5;
-      if(t - lastRip > 3.2) addRipple(innerWidth*(.2+Math.random()*.6), innerHeight*(.3+Math.random()*.4), .5);
+    .about-sticky {
+      position: sticky;
+      top: 0;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 96px 0 64px;
     }
 
-    cur.x += (tgt.x - cur.x) * .07;
-    cur.y += (tgt.y - cur.y) * .07;
+    .about-inner {
+      width: 100%;
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 0 var(--margin-x);
+    }
 
-    // Smooth Spring Physics for gravity fall (realistic liquid inertia)
-    const springK = 18.0;
-    const damping = 6.2;
-    const ax = (targetFallX - fallX) * springK - velFallX * damping;
-    const ay = (targetFallY - fallY) * springK - velFallY * damping;
-    velFallX += ax * dt;
-    velFallY += ay * dt;
-    fallX += velFallX * dt;
-    fallY += velFallY * dt;
+    .about-story {
+      width: 100%;
+      display: grid;
+      grid-template-columns: clamp(160px, 16vw, 225px) minmax(0, 1fr) clamp(160px, 16vw, 225px);
+      align-items: center;
+      gap: clamp(24px, 3.5vw, 56px);
+    }
 
-    // Animate press power (instant attack, fluid smooth release)
-    const targetPower = isPressing ? 1.0 : 0.0;
-    const powerSpeed = isPressing ? 18.0 : 8.0;
-    pressPower += (targetPower - pressPower) * (powerSpeed * dt);
-    if(pressPower < 0.001) pressPower = 0.0;
+    .about-photo {
+      display: block;
+      overflow: hidden;
+      box-shadow: 0 18px 40px -12px rgba(10, 10, 10, 0.28);
+      background: #d8d6d0;
+      transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.45s ease;
+    }
 
-    // Uniforms
-    gl.uniform1f(uTime, t);
-    gl.uniform1f(uIntro, clamp(t / 2.8, 0, 1));
-    gl.uniform2f(uLight, cur.x, cur.y);
-    gl.uniform4fv(uRip, rip);
+    .about-photo img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      filter: grayscale(100%) contrast(1.06);
+      transition: filter 0.45s cubic-bezier(0.22, 1, 0.36, 1), transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+    }
 
-    // Gravity fall vector
-    gl.uniform2f(uFall, fallX, fallY);
+    .about-photo:hover {
+      box-shadow: 0 26px 52px -12px rgba(10, 10, 10, 0.34);
+    }
 
-    // Chromatic aberration (strictly press-activated)
-    gl.uniform2f(uPressUV, pressUV.x, pressUV.y);
-    gl.uniform1f(uPressPower, pressPower);
+    .about-photo:hover img {
+      filter: grayscale(0%) contrast(1.03) saturate(1.12);
+      transform: scale(1.03);
+    }
 
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    requestAnimationFrame(frame);
-  }
+    .about-photo--one {
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      align-self: start;
+      margin-top: 8px;
+      transform: rotate(-5.5deg);
+    }
 
-  (document.fonts && document.fonts.load ? document.fonts.load('900 100px Inter').catch(() => {}) : Promise.resolve())
-    .finally(() => { build(); requestAnimationFrame(frame); });
-})();
-</script>
+    .about-photo--one:hover {
+      transform: rotate(-2deg) translateY(-4px);
+    }
+
+    .about-photo--two {
+      width: 88%;
+      justify-self: end;
+      align-self: end;
+      aspect-ratio: 4 / 5;
+      margin-bottom: 8px;
+      transform: rotate(5deg);
+      box-shadow: 0 22px 44px -12px rgba(10, 10, 10, 0.32);
+    }
+
+    .about-photo--two:hover {
+      transform: rotate(2deg) translateY(-4px);
+    }
+
+    .about-photo--two img {
+      object-position: center 18%;
+    }
+
+    .about-lead {
+      font-family: "Archivo", "Helvetica Neue", Arial, sans-serif;
+      font-weight: 500;
+      font-size: clamp(1.25rem, 2.2vw, 2.05rem);
+      line-height: 1.26;
+      letter-spacing: -0.015em;
+      color: rgba(10, 10, 10, 0.2);
+    }
+
+    .about-lead [data-word] {
+      display: inline-block;
+      white-space: nowrap;
+    }
+
+    .about-lead [data-char] {
+      color: rgba(10, 10, 10, 0.2);
+      transition: color 0.2s linear;
+    }
+
+    @keyframes char-wave {
+      0% {
+        color: rgba(10, 10, 10, 0.2);
+      }
+      30% {
+        color: #d12424;
+      }
+      100% {
+        color: #0a0a0a;
+      }
+    }
+
+    .about-lead [data-char][data-lit] {
+      color: #0a0a0a;
+      animation: char-wave 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+
+    @media (max-width: 899px) {
+      .about-section {
+        min-height: auto;
+      }
+
+      .about-sticky {
+        position: static;
+        min-height: auto;
+        padding: 72px 0 80px;
+      }
+
+      .about-story {
+        grid-template-columns: 1fr 1fr;
+        gap: 28px 18px;
+      }
+
+      .about-photo--one {
+        width: 100%;
+        max-width: 210px;
+        justify-self: start;
+        margin-top: 0;
+      }
+
+      .about-photo--two {
+        width: 82%;
+        max-width: 170px;
+        justify-self: end;
+        align-self: center;
+        margin-bottom: 0;
+      }
+
+      .about-lead {
+        grid-column: 1 / -1;
+        order: 3;
+        font-size: clamp(1.25rem, 5.2vw, 1.85rem);
+      }
+    }
+
+    /* ── Custom Black Dot + 6-Dot Trail Cursor (worksruthi.com) ───────── */
+    @media (hover: hover) and (pointer: fine) {
+      html.has-tc,
+      html.has-tc * {
+        cursor: none !important;
+      }
+
+      html.has-tc input,
+      html.has-tc textarea,
+      html.has-tc [contenteditable="true"] {
+        cursor: text !important;
+      }
+    }
+
+    .tc {
+      --tc-ball: #0A0A0A;
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+      z-index: 2147483000;
+      opacity: 0;
+      transition: opacity 0.2s ease-out;
+    }
+
+    .tc.is-visible {
+      opacity: 1;
+    }
+
+    .tc-trail,
+    .tc-ball {
+      position: fixed;
+      top: 0;
+      left: 0;
+      will-change: transform;
+    }
+
+    .tc-trail__dot {
+      position: fixed;
+      top: 0;
+      left: 0;
+      will-change: transform;
+    }
+
+    .tc-trail__dot::before {
+      content: "";
+      display: block;
+      border-radius: 50%;
+      background: var(--tc-ball);
+      transform: translate(-50%, -50%);
+    }
+
+    .tc-trail__dot:nth-child(1)::before { width: 12px;   height: 12px;   opacity: 0.85; }
+    .tc-trail__dot:nth-child(2)::before { width: 10.5px; height: 10.5px; opacity: 0.70; }
+    .tc-trail__dot:nth-child(3)::before { width: 9px;    height: 9px;    opacity: 0.55; }
+    .tc-trail__dot:nth-child(4)::before { width: 7.5px;  height: 7.5px;  opacity: 0.40; }
+    .tc-trail__dot:nth-child(5)::before { width: 6px;    height: 6px;    opacity: 0.28; }
+    .tc-trail__dot:nth-child(6)::before { width: 4.5px;  height: 4.5px;  opacity: 0.16; }
+
+    .tc-ball__in {
+      transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .tc.is-down .tc-ball__in {
+      transform: scale(0.82, 0.74);
+    }
+
+    .tc-ball__dot {
+      position: relative;
+      top: -7px;
+      left: -7px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--tc-ball);
+      box-shadow: 0 0 0 1px rgba(239, 238, 235, 0.16);
+      transform-origin: 50% 50%;
+      will-change: transform;
+    }
+
+    @media (hover: none), (pointer: coarse), (prefers-reduced-motion: reduce) {
+      .tc {
+        display: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Opening Signature Loader -->
+  <div class="loader" id="loader" aria-label="Loading RFernz — tap to replay">
+    <div class="loader__sig" id="loader-sig">
+      <!-- Light-grey ghost silhouette underneath -->
+      <svg
+        class="signature loader__ghost"
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 528 328"
+        aria-hidden="true"
+      >
+        <g transform="translate(0.000000,328.000000) scale(0.100000,-0.100000)" fill="currentColor" stroke="none">
+          <path d="M3010 3029 c-263 -28 -973 -206 -1404 -350 -538 -181 -1066 -451 -1289 -659 -66 -61 -77 -77 -77 -105 0 -39 21 -59 54 -51 35 9 127 89 113 98 -14 9 5 26 108 97 214 145 552 322 828 432 432 172 1351 417 1700 453 31 4 57 3 57 -1 0 -5 -37 -31 -82 -58 -139 -84 -1120 -745 -1259 -847 l-76 -57 -8 262 c-4 144 -12 273 -17 287 -12 31 -25 40 -60 40 -54 0 -57 -16 -59 -340 -1 -162 -4 -312 -6 -332 -5 -33 -18 -48 -137 -146 -207 -172 -345 -271 -431 -311 -44 -21 -99 -50 -122 -64 -24 -15 -49 -27 -56 -27 -23 0 -47 -35 -47 -67 0 -47 30 -67 89 -60 57 7 115 33 237 108 l88 54 115 0 c93 0 130 -5 186 -22 39 -13 76 -27 83 -31 10 -7 15 -112 23 -483 6 -261 13 -494 15 -518 10 -83 91 -121 133 -63 19 28 19 33 6 502 -8 261 -13 476 -11 478 2 1 23 -12 47 -30 62 -47 113 -129 199 -318 169 -374 280 -534 398 -576 56 -20 139 -17 186 6 43 20 166 139 131 125 -107 -40 -160 -44 -237 -15 -105 39 -165 124 -345 488 -111 226 -132 261 -188 320 -35 37 -93 85 -129 106 -48 28 -66 45 -70 64 -3 15 -8 110 -12 212 l-6 185 148 111 c82 61 230 166 329 234 99 68 288 200 420 294 254 181 527 367 531 363 1 -1 -6 -29 -17 -61 -13 -38 -33 -168 -54 -360 -19 -166 -41 -350 -49 -411 -41 -305 -47 -884 -11 -1161 l19 -142 -33 -88 c-18 -49 -44 -106 -58 -127 -26 -42 -24 -72 7 -82 31 -10 58 12 89 72 28 56 28 57 41 32 25 -49 72 -89 105 -89 31 0 95 47 95 70 0 13 105 183 134 217 l23 26 7 -54 c20 -157 70 -259 125 -259 43 1 70 31 130 146 31 60 60 109 65 109 5 0 22 -31 37 -68 33 -82 51 -103 93 -113 72 -17 102 -1 181 97 l56 69 48 -34 c38 -25 70 -37 139 -50 112 -20 110 -20 157 5 31 15 51 19 87 14 28 -3 63 0 90 9 23 7 66 19 93 26 39 9 195 84 195 93 0 6 -279 -1 -300 -7 -14 -4 -47 -2 -74 4 -43 9 -54 8 -103 -15 -47 -21 -61 -24 -92 -15 -20 5 -48 10 -62 10 -14 0 -45 15 -69 33 -24 17 -51 38 -62 46 -36 27 -89 -1 -171 -90 l-74 -81 -23 58 c-33 85 -56 120 -90 136 -66 32 -137 -13 -200 -125 -18 -32 -34 -56 -36 -54 -2 2 -11 53 -19 113 -13 92 -20 113 -42 136 -66 69 -150 16 -269 -167 -27 -41 -52 -75 -55 -75 -4 0 -12 35 -19 77 -11 77 -11 80 24 198 122 413 165 677 202 1250 20 313 16 478 -15 556 -40 104 -102 168 -163 169 -22 1 -22 1 6 22 16 12 35 37 43 56 13 32 13 37 -5 61 -30 41 -73 46 -222 30z m234 -408 c19 -65 21 -284 6 -541 -25 -415 -56 -641 -128 -935 l-26 -110 -7 60 c-20 174 -3 634 36 980 13 121 29 272 35 335 12 129 28 256 37 283 5 18 5 18 18 0 7 -10 20 -43 29 -72z m-1702 -1043 c3 -62 4 -114 3 -116 -1 -1 -15 3 -31 9 -16 6 -66 19 -112 28 l-83 17 103 86 c57 48 106 87 109 87 4 1 9 -50 11 -111z"/>
+          <path d="M4980 716 c0 -8 4 -18 10 -21 13 -8 52 14 45 26 -10 15 -55 11 -55 -5z"/>
+        </g>
+      </svg>
+
+      <!-- Stroke-by-stroke animated ink over the ghost -->
+      <svg
+        class="signature loader__draw"
+        id="sig-svg"
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 528 328"
+        role="img"
+        aria-label="RFernz signature"
+      >
+        <defs>
+          <mask id="sig-mask" maskUnits="userSpaceOnUse" x="-40" y="-40" width="608" height="408">
+            <g id="mask-strokes">
+              <path class="sig-mask-path stem" d="M 159.50 74.00 L 164.50 296.00"/>
+              <path class="sig-mask-path" d="M 28.00 136.00 C 35.50 126.67, 50.50 115.33, 73.00 102.00 C 98.00 88.00, 125.00 76.00, 159.00 64.00 C 195.00 52.00, 236.00 42.00, 268.00 34.00 C 288.00 29.50, 302.00 27.50, 310.00 29.00 C 314.00 30.00, 313.00 35.00, 308.00 38.00 C 296.00 47.00, 276.00 61.00, 240.00 87.00 C 204.00 113.00, 173.00 134.00, 147.00 154.00 C 134.00 164.00, 126.00 174.00, 114.00 182.00 C 102.00 189.00, 88.00 195.00, 80.00 199.00"/>
+              <path class="sig-mask-path" d="M 124.00 179.00 C 134.00 182.00, 148.00 185.00, 162.00 194.00 C 174.00 201.00, 182.00 206.00, 192.00 222.00 C 204.00 242.00, 215.00 267.00, 226.00 280.00 C 236.00 291.00, 250.00 292.00, 267.00 282.00"/>
+              <path class="sig-mask-path tail" d="M 290.00 286.00 C 291.33 284.00, 295.33 276.83, 298.00 274.00 C 300.67 271.17, 304.67 269.83, 305.00 232.00 C 301.33 226.83, 301.17 229.00, 301.00 219.00 C 300.83 209.00, 301.00 177.33, 301.00 169.00 C 302.67 152.00, 309.00 86.00, 311.00 67.00 C 313.00 48.00, 312.00 58.00, 313.00 55.00 C 314.00 52.00, 316.33 50.00, 317.00 49.00 C 321.33 53.17, 324.00 51.17, 326.00 54.00 C 328.00 56.83, 330.17 58.83, 331.00 68.00 C 331.83 77.17, 331.67 93.83, 331.00 109.00 C 330.33 124.17, 329.67 139.83, 327.00 159.00 C 324.33 178.17, 318.67 211.50, 315.00 224.00 C 311.33 236.50, 306.50 226.50, 305.00 234.00 C 303.50 241.50, 304.50 262.17, 306.00 269.00 C 307.50 275.83, 312.67 274.00, 314.00 275.00 C 315.50 273.83, 319.67 271.83, 323.00 268.00 C 326.33 264.17, 331.17 255.00, 334.00 252.00 C 336.83 249.00, 338.17 250.00, 340.00 250.00 C 341.83 250.00, 343.67 248.33, 345.00 252.00 C 346.33 255.67, 346.83 268.17, 348.00 272.00 C 349.17 275.83, 350.50 274.83, 352.00 275.00 C 353.50 275.17, 354.67 275.67, 357.00 273.00 C 359.33 270.33, 363.50 261.83, 366.00 259.00 C 368.50 256.17, 369.83 255.83, 372.00 256.00 C 374.17 256.17, 377.17 257.50, 379.00 260.00 C 380.83 262.50, 381.67 268.67, 383.00 271.00 C 384.33 273.33, 385.33 273.67, 387.00 274.00 C 388.67 274.33, 389.67 275.50, 393.00 273.00 C 396.33 270.50, 399.67 260.00, 407.00 259.00 C 414.33 258.00, 423.33 267.33, 437.00 267.00 C 450.67 266.67, 480.33 258.67, 489.00 257.00"/>
+              <path class="sig-mask-path" d="M 499.00 256.00 L 502.00 256.00"/>
+            </g>
+          </mask>
+        </defs>
+
+        <g mask="url(#sig-mask)">
+          <g transform="translate(0.000000,328.000000) scale(0.100000,-0.100000)" fill="currentColor" stroke="none">
+            <path d="M3010 3029 c-263 -28 -973 -206 -1404 -350 -538 -181 -1066 -451 -1289 -659 -66 -61 -77 -77 -77 -105 0 -39 21 -59 54 -51 35 9 127 89 113 98 -14 9 5 26 108 97 214 145 552 322 828 432 432 172 1351 417 1700 453 31 4 57 3 57 -1 0 -5 -37 -31 -82 -58 -139 -84 -1120 -745 -1259 -847 l-76 -57 -8 262 c-4 144 -12 273 -17 287 -12 31 -25 40 -60 40 -54 0 -57 -16 -59 -340 -1 -162 -4 -312 -6 -332 -5 -33 -18 -48 -137 -146 -207 -172 -345 -271 -431 -311 -44 -21 -99 -50 -122 -64 -24 -15 -49 -27 -56 -27 -23 0 -47 -35 -47 -67 0 -47 30 -67 89 -60 57 7 115 33 237 108 l88 54 115 0 c93 0 130 -5 186 -22 39 -13 76 -27 83 -31 10 -7 15 -112 23 -483 6 -261 13 -494 15 -518 10 -83 91 -121 133 -63 19 28 19 33 6 502 -8 261 -13 476 -11 478 2 1 23 -12 47 -30 62 -47 113 -129 199 -318 169 -374 280 -534 398 -576 56 -20 139 -17 186 6 43 20 166 139 131 125 -107 -40 -160 -44 -237 -15 -105 39 -165 124 -345 488 -111 226 -132 261 -188 320 -35 37 -93 85 -129 106 -48 28 -66 45 -70 64 -3 15 -8 110 -12 212 l-6 185 148 111 c82 61 230 166 329 234 99 68 288 200 420 294 254 181 527 367 531 363 1 -1 -6 -29 -17 -61 -13 -38 -33 -168 -54 -360 -19 -166 -41 -350 -49 -411 -41 -305 -47 -884 -11 -1161 l19 -142 -33 -88 c-18 -49 -44 -106 -58 -127 -26 -42 -24 -72 7 -82 31 -10 58 12 89 72 28 56 28 57 41 32 25 -49 72 -89 105 -89 31 0 95 47 95 70 0 13 105 183 134 217 l23 26 7 -54 c20 -157 70 -259 125 -259 43 1 70 31 130 146 31 60 60 109 65 109 5 0 22 -31 37 -68 33 -82 51 -103 93 -113 72 -17 102 -1 181 97 l56 69 48 -34 c38 -25 70 -37 139 -50 112 -20 110 -20 157 5 31 15 51 19 87 14 28 -3 63 0 90 9 23 7 66 19 93 26 39 9 195 84 195 93 0 6 -279 -1 -300 -7 -14 -4 -47 -2 -74 4 -43 9 -54 8 -103 -15 -47 -21 -61 -24 -92 -15 -20 5 -48 10 -62 10 -14 0 -45 15 -69 33 -24 17 -51 38 -62 46 -36 27 -89 -1 -171 -90 l-74 -81 -23 58 c-33 85 -56 120 -90 136 -66 32 -137 -13 -200 -125 -18 -32 -34 -56 -36 -54 -2 2 -11 53 -19 113 -13 92 -20 113 -42 136 -66 69 -150 16 -269 -167 -27 -41 -52 -75 -55 -75 -4 0 -12 35 -19 77 -11 77 -11 80 24 198 122 413 165 677 202 1250 20 313 16 478 -15 556 -40 104 -102 168 -163 169 -22 1 -22 1 6 22 16 12 35 37 43 56 13 32 13 37 -5 61 -30 41 -73 46 -222 30z m234 -408 c19 -65 21 -284 6 -541 -25 -415 -56 -641 -128 -935 l-26 -110 -7 60 c-20 174 -3 634 36 980 13 121 29 272 35 335 12 129 28 256 37 283 5 18 5 18 18 0 7 -10 20 -43 29 -72z m-1702 -1043 c3 -62 4 -114 3 -116 -1 -1 -15 3 -31 9 -16 6 -66 19 -112 28 l-83 17 103 86 c57 48 106 87 109 87 4 1 9 -50 11 -111z"/>
+            <path d="M4980 716 c0 -8 4 -18 10 -21 13 -8 52 14 45 26 -10 15 -55 11 -55 -5z"/>
+          </g>
+        </g>
+
+        <g class="sig-solid" id="sig-solid" opacity="0">
+          <g transform="translate(0.000000,328.000000) scale(0.100000,-0.100000)" fill="currentColor" stroke="none">
+            <path d="M3010 3029 c-263 -28 -973 -206 -1404 -350 -538 -181 -1066 -451 -1289 -659 -66 -61 -77 -77 -77 -105 0 -39 21 -59 54 -51 35 9 127 89 113 98 -14 9 5 26 108 97 214 145 552 322 828 432 432 172 1351 417 1700 453 31 4 57 3 57 -1 0 -5 -37 -31 -82 -58 -139 -84 -1120 -745 -1259 -847 l-76 -57 -8 262 c-4 144 -12 273 -17 287 -12 31 -25 40 -60 40 -54 0 -57 -16 -59 -340 -1 -162 -4 -312 -6 -332 -5 -33 -18 -48 -137 -146 -207 -172 -345 -271 -431 -311 -44 -21 -99 -50 -122 -64 -24 -15 -49 -27 -56 -27 -23 0 -47 -35 -47 -67 0 -47 30 -67 89 -60 57 7 115 33 237 108 l88 54 115 0 c93 0 130 -5 186 -22 39 -13 76 -27 83 -31 10 -7 15 -112 23 -483 6 -261 13 -494 15 -518 10 -83 91 -121 133 -63 19 28 19 33 6 502 -8 261 -13 476 -11 478 2 1 23 -12 47 -30 62 -47 113 -129 199 -318 169 -374 280 -534 398 -576 56 -20 139 -17 186 6 43 20 166 139 131 125 -107 -40 -160 -44 -237 -15 -105 39 -165 124 -345 488 -111 226 -132 261 -188 320 -35 37 -93 85 -129 106 -48 28 -66 45 -70 64 -3 15 -8 110 -12 212 l-6 185 148 111 c82 61 230 166 329 234 99 68 288 200 420 294 254 181 527 367 531 363 1 -1 -6 -29 -17 -61 -13 -38 -33 -168 -54 -360 -19 -166 -41 -350 -49 -411 -41 -305 -47 -884 -11 -1161 l19 -142 -33 -88 c-18 -49 -44 -106 -58 -127 -26 -42 -24 -72 7 -82 31 -10 58 12 89 72 28 56 28 57 41 32 25 -49 72 -89 105 -89 31 0 95 47 95 70 0 13 105 183 134 217 l23 26 7 -54 c20 -157 70 -259 125 -259 43 1 70 31 130 146 31 60 60 109 65 109 5 0 22 -31 37 -68 33 -82 51 -103 93 -113 72 -17 102 -1 181 97 l56 69 48 -34 c38 -25 70 -37 139 -50 112 -20 110 -20 157 5 31 15 51 19 87 14 28 -3 63 0 90 9 23 7 66 19 93 26 39 9 195 84 195 93 0 6 -279 -1 -300 -7 -14 -4 -47 -2 -74 4 -43 9 -54 8 -103 -15 -47 -21 -61 -24 -92 -15 -20 5 -48 10 -62 10 -14 0 -45 15 -69 33 -24 17 -51 38 -62 46 -36 27 -89 -1 -171 -90 l-74 -81 -23 58 c-33 85 -56 120 -90 136 -66 32 -137 -13 -200 -125 -18 -32 -34 -56 -36 -54 -2 2 -11 53 -19 113 -13 92 -20 113 -42 136 -66 69 -150 16 -269 -167 -27 -41 -52 -75 -55 -75 -4 0 -12 35 -19 77 -11 77 -11 80 24 198 122 413 165 677 202 1250 20 313 16 478 -15 556 -40 104 -102 168 -163 169 -22 1 -22 1 6 22 16 12 35 37 43 56 13 32 13 37 -5 61 -30 41 -73 46 -222 30z m234 -408 c19 -65 21 -284 6 -541 -25 -415 -56 -641 -128 -935 l-26 -110 -7 60 c-20 174 -3 634 36 980 13 121 29 272 35 335 12 129 28 256 37 283 5 18 5 18 18 0 7 -10 20 -43 29 -72z m-1702 -1043 c3 -62 4 -114 3 -116 -1 -1 -15 3 -31 9 -16 6 -66 19 -112 28 l-83 17 103 86 c57 48 106 87 109 87 4 1 9 -50 11 -111z"/>
+            <path d="M4980 716 c0 -8 4 -18 10 -21 13 -8 52 14 45 26 -10 15 -55 11 -55 -5z"/>
+          </g>
+        </g>
+      </svg>
+    </div>
+  </div>
+
+  <!-- Top Navbar (Signature Logo + Minimal Links) -->
+  <header class="main-header" id="main-header">
+    <div class="main-header-inner">
+      <a class="nav-logo" href="#hero" aria-label="Rohit Fernz — Home">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 528 328" aria-hidden="true">
+          <g transform="translate(0.000000,328.000000) scale(0.100000,-0.100000)" fill="currentColor" stroke="none">
+            <path d="M3010 3029 c-263 -28 -973 -206 -1404 -350 -538 -181 -1066 -451 -1289 -659 -66 -61 -77 -77 -77 -105 0 -39 21 -59 54 -51 35 9 127 89 113 98 -14 9 5 26 108 97 214 145 552 322 828 432 432 172 1351 417 1700 453 31 4 57 3 57 -1 0 -5 -37 -31 -82 -58 -139 -84 -1120 -745 -1259 -847 l-76 -57 -8 262 c-4 144 -12 273 -17 287 -12 31 -25 40 -60 40 -54 0 -57 -16 -59 -340 -1 -162 -4 -312 -6 -332 -5 -33 -18 -48 -137 -146 -207 -172 -345 -271 -431 -311 -44 -21 -99 -50 -122 -64 -24 -15 -49 -27 -56 -27 -23 0 -47 -35 -47 -67 0 -47 30 -67 89 -60 57 7 115 33 237 108 l88 54 115 0 c93 0 130 -5 186 -22 39 -13 76 -27 83 -31 10 -7 15 -112 23 -483 6 -261 13 -494 15 -518 10 -83 91 -121 133 -63 19 28 19 33 6 502 -8 261 -13 476 -11 478 2 1 23 -12 47 -30 62 -47 113 -129 199 -318 169 -374 280 -534 398 -576 56 -20 139 -17 186 6 43 20 166 139 131 125 -107 -40 -160 -44 -237 -15 -105 39 -165 124 -345 488 -111 226 -132 261 -188 320 -35 37 -93 85 -129 106 -48 28 -66 45 -70 64 -3 15 -8 110 -12 212 l-6 185 148 111 c82 61 230 166 329 234 99 68 288 200 420 294 254 181 527 367 531 363 1 -1 -6 -29 -17 -61 -13 -38 -33 -168 -54 -360 -19 -166 -41 -350 -49 -411 -41 -305 -47 -884 -11 -1161 l19 -142 -33 -88 c-18 -49 -44 -106 -58 -127 -26 -42 -24 -72 7 -82 31 -10 58 12 89 72 28 56 28 57 41 32 25 -49 72 -89 105 -89 31 0 95 47 95 70 0 13 105 183 134 217 l23 26 7 -54 c20 -157 70 -259 125 -259 43 1 70 31 130 146 31 60 60 109 65 109 5 0 22 -31 37 -68 33 -82 51 -103 93 -113 72 -17 102 -1 181 97 l56 69 48 -34 c38 -25 70 -37 139 -50 112 -20 110 -20 157 5 31 15 51 19 87 14 28 -3 63 0 90 9 23 7 66 19 93 26 39 9 195 84 195 93 0 6 -279 -1 -300 -7 -14 -4 -47 -2 -74 4 -43 9 -54 8 -103 -15 -47 -21 -61 -24 -92 -15 -20 5 -48 10 -62 10 -14 0 -45 15 -69 33 -24 17 -51 38 -62 46 -36 27 -89 -1 -171 -90 l-74 -81 -23 58 c-33 85 -56 120 -90 136 -66 32 -137 -13 -200 -125 -18 -32 -34 -56 -36 -54 -2 2 -11 53 -19 113 -13 92 -20 113 -42 136 -66 69 -150 16 -269 -167 -27 -41 -52 -75 -55 -75 -4 0 -12 35 -19 77 -11 77 -11 80 24 198 122 413 165 677 202 1250 20 313 16 478 -15 556 -40 104 -102 168 -163 169 -22 1 -22 1 6 22 16 12 35 37 43 56 13 32 13 37 -5 61 -30 41 -73 46 -222 30z m234 -408 c19 -65 21 -284 6 -541 -25 -415 -56 -641 -128 -935 l-26 -110 -7 60 c-20 174 -3 634 36 980 13 121 29 272 35 335 12 129 28 256 37 283 5 18 5 18 18 0 7 -10 20 -43 29 -72z m-1702 -1043 c3 -62 4 -114 3 -116 -1 -1 -15 3 -31 9 -16 6 -66 19 -112 28 l-83 17 103 86 c57 48 106 87 109 87 4 1 9 -50 11 -111z"/>
+            <path d="M4980 716 c0 -8 4 -18 10 -21 13 -8 52 14 45 26 -10 15 -55 11 -55 -5z"/>
+          </g>
+        </svg>
+      </a>
+
+      <nav class="main-nav" aria-label="Primary">
+        <button class="nav-btn" id="replay-btn" type="button" aria-label="Replay intro">
+          <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" aria-hidden="true">
+            <path d="M3 8V3h10v10H3v-2" />
+            <path d="M5.5 5.5L3 3l2.5-2.5" />
+          </svg>
+          <span class="nav-label-wrap"><span class="nav-label">Replay</span></span>
+        </button>
+
+        <a class="nav-btn" href="#works" aria-label="Works">
+          <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" aria-hidden="true">
+            <rect x="2" y="2" width="4.5" height="4.5" />
+            <rect x="9.5" y="2" width="4.5" height="4.5" />
+            <rect x="2" y="9.5" width="4.5" height="4.5" />
+            <rect x="9.5" y="9.5" width="4.5" height="4.5" />
+          </svg>
+          <span class="nav-label-wrap"><span class="nav-label">Works</span></span>
+        </a>
+
+        <a class="nav-btn" href="#about" aria-label="About">
+          <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" aria-hidden="true">
+            <rect x="2" y="2" width="12" height="12" />
+            <rect x="6" y="4.5" width="4" height="4" />
+            <path d="M4.5 14v-2.5h7V14" />
+          </svg>
+          <span class="nav-label-wrap"><span class="nav-label">About</span></span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <main class="hero" id="hero">
+    <!-- Full-bleed Studio Portrait -->
+    <div class="hero-portrait-wrap" id="hero-portrait-wrap">
+      <img
+        class="hero-portrait"
+        src="hero-portrait.jpg"
+        alt="Portrait of Rohit Fernz with motion blur"
+      />
+    </div>
+
+    <!-- Bottom-Left Name -->
+    <section class="hero-content" aria-label="Introduction">
+      <div class="hero-text-col">
+        <div class="hg-1-wrapper" id="hg-1-wrapper">
+          <h1 class="hg-1" id="hero-name" aria-label="Rohit Fenantez">Rohit|Fenantez</h1>
+        </div>
+      </div>
+    </section>
+
+    <!-- Directional Horizontal Motion-Blur SVG Filters -->
+    <svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;">
+      <defs id="motion-blur-defs">
+        <filter id="portrait-motion-blur" x="0%" y="0%" width="100%" height="100%">
+          <feGaussianBlur id="portrait-blur-node" in="SourceGraphic" stdDeviation="0 0" edgeMode="duplicate" />
+        </filter>
+      </defs>
+    </svg>
+  </main>
+
+  <!-- About / Story Section -->
+  <section class="about-section" id="about" aria-label="About Rohit">
+    <div class="about-sticky">
+      <div class="about-inner">
+        <div class="about-story">
+          <div class="about-photo about-photo--one" aria-hidden="true">
+            <img src="childhood-1.jpg" alt="Young Rohit holding a kitten" loading="lazy" />
+          </div>
+
+          <p class="about-lead" id="about-wave">
+            Hey, I’m Rohit — a developer who didn’t just learn to code, I fell in love with it because the kid I used to be never stopped wanting to build things from scratch. Long before screens and syntax, there was a younger me taking things apart just to see how they lived, and finding magic in making something out of nothing. Every interface and line of code I write still carries that same quiet wonder.
+          </p>
+
+          <div class="about-photo about-photo--two" aria-hidden="true">
+            <img src="childhood-2.jpg" alt="Childhood portrait of Rohit" loading="lazy" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Custom Black Dot + Trail Cursor -->
+  <span class="tc" id="tc" aria-hidden="true">
+    <span class="tc-trail">
+      <span class="tc-trail__dot"></span>
+      <span class="tc-trail__dot"></span>
+      <span class="tc-trail__dot"></span>
+      <span class="tc-trail__dot"></span>
+      <span class="tc-trail__dot"></span>
+      <span class="tc-trail__dot"></span>
+    </span>
+    <span class="tc-ball" id="tc-ball">
+      <span class="tc-ball__in">
+        <span class="tc-ball__dot" id="tc-ball-dot"></span>
+      </span>
+    </span>
+  </span>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <script>
+    (() => {
+      const html = document.documentElement;
+      const loader = document.getElementById('loader');
+      const loaderSig = document.getElementById('loader-sig');
+      const solid = document.getElementById('sig-solid');
+      const maskPaths = Array.from(document.querySelectorAll('#mask-strokes .sig-mask-path'));
+
+      const header = document.getElementById('main-header');
+      const heroEl = document.getElementById('hero');
+      const heroNameWrap = document.getElementById('hg-1-wrapper');
+      const heroName = document.getElementById('hero-name');
+      const portraitWrap = document.getElementById('hero-portrait-wrap');
+      const portraitImg = portraitWrap.querySelector('.hero-portrait');
+      const portraitBlurNode = document.getElementById('portrait-blur-node');
+      const motionBlurDefs = document.getElementById('motion-blur-defs');
+      const replayBtn = document.getElementById('replay-btn');
+
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const canHover = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+      let tl = null;
+      let heroSettled = false;
+
+      // Split hero name ("Rohit|Fernz") into two stacked lines of clipped character spans
+      const rawLines = heroName.textContent.trim().split('|');
+      heroName.textContent = '';
+      const nameChars = [];
+      rawLines.forEach((line) => {
+        const lineSpan = document.createElement('span');
+        lineSpan.className = 'name-line';
+        for (const ch of line) {
+          const clip = document.createElement('span');
+          clip.className = 'char-clip';
+          const span = document.createElement('span');
+          span.className = 'char';
+          span.textContent = ch;
+          clip.appendChild(span);
+          lineSpan.appendChild(clip);
+          nameChars.push(span);
+        }
+        heroName.appendChild(lineSpan);
+      });
+
+      function revealHeroImmediate() {
+        html.classList.remove('is-loading');
+        loader.style.display = 'none';
+        if (typeof window.gsap !== 'undefined') {
+          gsap.set(heroNameWrap, { y: 0 });
+          gsap.set(header, { opacity: 1 });
+          gsap.set(nameChars, { yPercent: 0, opacity: 1 });
+          gsap.set(portraitWrap, { scale: 1, opacity: 1 });
+        } else {
+          header.style.opacity = '1';
+          portraitWrap.style.opacity = '1';
+        }
+        heroSettled = true;
+        heroEl.classList.add('is-settled');
+      }
+
+      function animateHeroIn() {
+        html.classList.remove('is-loading');
+        const heroTl = gsap.timeline({
+          onComplete: () => {
+            heroSettled = true;
+            heroEl.classList.add('is-settled');
+          }
+        });
+
+        // Step 1: Name characters rise into place with the signature clipped reveal
+        heroTl.to(nameChars, {
+          yPercent: 0,
+          opacity: 1,
+          duration: 0.85,
+          stagger: 0.032,
+          ease: 'expo.out'
+        }, 0);
+
+        heroTl.to(heroNameWrap, {
+          y: 0,
+          duration: 0.85,
+          ease: 'expo.inOut'
+        }, 0.55);
+
+        // Step 2: Reveal portrait and navbar
+        heroTl.to(portraitWrap, {
+          scale: 1,
+          opacity: 1,
+          duration: 1.05,
+          ease: 'expo.out'
+        }, 0.35);
+
+        heroTl.to(header, {
+          opacity: 1,
+          duration: 0.6,
+          ease: 'power2.out'
+        }, 0.75);
+      }
+
+      function emitDone() {
+        document.dispatchEvent(new CustomEvent('signature:done', { bubbles: true }));
+      }
+
+      if (reducedMotion) {
+        maskPaths.forEach((p) => {
+          p.style.strokeDasharray = 'none';
+          p.style.strokeDashoffset = '0';
+          p.style.opacity = '1';
+        });
+        solid.setAttribute('opacity', '1');
+        revealHeroImmediate();
+        emitDone();
+        return;
+      }
+
+      if (typeof window.gsap === 'undefined') {
+        revealHeroImmediate();
+        emitDone();
+        return;
+      }
+
+      const pathData = maskPaths.map((path) => ({
+        path,
+        len: Math.max(path.getTotalLength(), 1)
+      }));
+
+      function playIntro() {
+        if (tl) tl.kill();
+        heroSettled = false;
+        heroEl.classList.remove('is-settled');
+        nameChars.forEach((ch) => {
+          ch.style.transform = '';
+          ch.style.filter = '';
+        });
+        if (portraitImg) {
+          portraitImg.style.transform = '';
+          portraitImg.style.filter = '';
+        }
+        if (portraitBlurNode) portraitBlurNode.setAttribute('stdDeviation', '0 0');
+        html.classList.add('is-loading');
+
+        loader.style.display = 'grid';
+        gsap.set(loader, {
+          yPercent: 0,
+          borderBottomLeftRadius: '0% 0vh',
+          borderBottomRightRadius: '0% 0vh'
+        });
+        gsap.set(loaderSig, { y: 0, opacity: 1 });
+        gsap.set(solid, { attr: { opacity: 0 } });
+
+        // Reset hero elements
+        gsap.set(heroNameWrap, { y: 24 });
+        gsap.set(header, { opacity: 0 });
+        gsap.set(nameChars, { yPercent: 108, opacity: 0 });
+        gsap.set(portraitWrap, { scale: 1.05, opacity: 0 });
+
+        pathData.forEach(({ path, len }, idx) => {
+          path.style.strokeDasharray = `${len}`;
+          path.style.strokeDashoffset = `${len}`;
+          path.style.opacity = idx === 0 ? '1' : '0';
+        });
+
+        tl = gsap.timeline();
+
+        // 1. Stroke-by-stroke signature draw
+        const timings = [
+          { duration: 0.34, ease: 'power2.out',   at: 0.15 },
+          { duration: 0.80, ease: 'power1.inOut', at: '+=0.06' },
+          { duration: 0.34, ease: 'power2.out',   at: '-=0.05' },
+          { duration: 1.05, ease: 'sine.inOut',   at: '+=0.06' },
+          { duration: 0.08, ease: 'power1.out',   at: '+=0.04' }
+        ];
+
+        pathData.forEach(({ path }, idx) => {
+          const cfg = timings[idx] || { duration: 0.35, ease: 'power2.inOut', at: '-=0.04' };
+          if (idx > 0) {
+            tl.set(path, { opacity: 1 }, cfg.at);
+          }
+          tl.to(
+            path,
+            {
+              strokeDashoffset: 0,
+              duration: cfg.duration,
+              ease: cfg.ease
+            },
+            idx > 0 ? '<' : cfg.at
+          );
+        });
+
+        const drawEnd = tl.duration();
+
+        tl.to(solid, {
+          attr: { opacity: 1 },
+          duration: 0.25,
+          ease: 'power1.out'
+        }, drawEnd - 0.18);
+
+        // 2. Hold 0.22s, lift signature, and sweep liquid curtain up to reveal hero
+        const exitStart = drawEnd + 0.22;
+
+        tl.to(loaderSig, {
+          y: -24,
+          opacity: 0,
+          duration: 0.55,
+          ease: 'power3.in'
+        }, exitStart);
+
+        tl.call(() => {
+          emitDone();
+          animateHeroIn();
+        }, null, exitStart + 0.45);
+
+        tl.to(loader, {
+          yPercent: -100,
+          borderBottomLeftRadius: '50% 18vh',
+          borderBottomRightRadius: '50% 18vh',
+          duration: 1.05,
+          ease: 'expo.inOut',
+          onComplete: () => {
+            loader.style.display = 'none';
+          }
+        }, exitStart + 0.12);
+      }
+
+      loader.addEventListener('click', playIntro);
+      replayBtn.addEventListener('click', playIntro);
+      playIntro();
+
+      // ── Hero Cursor Effects: Horizontal Side-Blur + Magnetic Text ──────
+      if (!reducedMotion && canHover && motionBlurDefs && portraitBlurNode && portraitImg) {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const charStates = nameChars.map((el, idx) => {
+          const filterId = `char-hblur-${idx}`;
+          const filter = document.createElementNS(svgNS, 'filter');
+          filter.setAttribute('id', filterId);
+          filter.setAttribute('x', '-35%');
+          filter.setAttribute('y', '-15%');
+          filter.setAttribute('width', '170%');
+          filter.setAttribute('height', '130%');
+          const blur = document.createElementNS(svgNS, 'feGaussianBlur');
+          blur.setAttribute('in', 'SourceGraphic');
+          blur.setAttribute('stdDeviation', '0 0');
+          filter.appendChild(blur);
+          motionBlurDefs.appendChild(filter);
+          return { el, filterId, blur, tx: 0, ty: 0, sx: 1, b: 0 };
+        });
+
+        let pointerX = -9999;
+        let pointerY = -9999;
+        let prevPointerX = null;
+        let pointerActive = false;
+        let speedX = 0;
+        let targetParallaxX = 0;
+        let targetParallaxY = 0;
+        let currentParallaxX = 0;
+        let currentParallaxY = 0;
+        let portraitBlur = 0;
+
+        heroEl.addEventListener('pointermove', (e) => {
+          if (!heroSettled) return;
+          pointerActive = true;
+          if (prevPointerX !== null) {
+            const dx = e.clientX - prevPointerX;
+            speedX = Math.min(Math.abs(dx) * 0.42, 16);
+          }
+          prevPointerX = e.clientX;
+          pointerX = e.clientX;
+          pointerY = e.clientY;
+
+          const rect = heroEl.getBoundingClientRect();
+          const nx = ((e.clientX - rect.left) / Math.max(rect.width, 1) - 0.5) * 2;
+          const ny = ((e.clientY - rect.top) / Math.max(rect.height, 1) - 0.5) * 2;
+          targetParallaxX = -nx * 14;
+          targetParallaxY = -ny * 8;
+        }, { passive: true });
+
+        heroEl.addEventListener('pointerleave', () => {
+          pointerActive = false;
+          prevPointerX = null;
+          pointerX = -9999;
+          pointerY = -9999;
+          targetParallaxX = 0;
+          targetParallaxY = 0;
+        }, { passive: true });
+
+        function tickHeroCursor() {
+          if (heroSettled) {
+            // Smoothly decay horizontal velocity
+            speedX *= 0.86;
+            const targetPortraitBlur = pointerActive ? Math.min(speedX * 0.75, 11) : 0;
+            portraitBlur += (targetPortraitBlur - portraitBlur) * 0.16;
+
+            currentParallaxX += (targetParallaxX - currentParallaxX) * 0.08;
+            currentParallaxY += (targetParallaxY - currentParallaxY) * 0.08;
+
+            const pScale = pointerActive ? 1.025 : 1;
+            portraitImg.style.transform = `translate3d(${currentParallaxX.toFixed(2)}px, ${currentParallaxY.toFixed(2)}px, 0) scale(${pScale})`;
+            if (portraitBlur > 0.08) {
+              portraitBlurNode.setAttribute('stdDeviation', `${portraitBlur.toFixed(2)} 0`);
+              portraitImg.style.filter = 'url(#portrait-motion-blur)';
+            } else {
+              portraitBlurNode.setAttribute('stdDeviation', '0 0');
+              portraitImg.style.filter = 'none';
+            }
+
+            // Per-character horizontal motion-blur + magnetic micro-shift
+            const radius = Math.max(150, window.innerWidth * 0.14);
+            for (const st of charStates) {
+              const r = st.el.getBoundingClientRect();
+              const cx = r.left + r.width / 2;
+              const cy = r.top + r.height / 2;
+              const dx = pointerX - cx;
+              const dy = pointerY - cy;
+              const dist = Math.hypot(dx, dy);
+
+              let targetTx = 0;
+              let targetTy = 0;
+              let targetSx = 1;
+              let targetB = 0;
+
+              if (pointerActive && dist < radius) {
+                const influence = Math.pow(1 - dist / radius, 1.6);
+                targetTx = -(dx / Math.max(dist, 1)) * influence * 10;
+                targetTy = -influence * 10;
+                targetSx = 1 + influence * 0.09;
+                targetB = influence * 5.2 + Math.min(speedX * 0.35, 4) * influence;
+              }
+
+              st.tx += (targetTx - st.tx) * 0.18;
+              st.ty += (targetTy - st.ty) * 0.18;
+              st.sx += (targetSx - st.sx) * 0.18;
+              st.b += (targetB - st.b) * 0.2;
+
+              if (Math.abs(st.tx) > 0.05 || Math.abs(st.ty) > 0.05 || Math.abs(st.sx - 1) > 0.002) {
+                st.el.style.transform = `translate3d(${st.tx.toFixed(2)}px, ${st.ty.toFixed(2)}px, 0) scaleX(${st.sx.toFixed(3)})`;
+              } else {
+                st.el.style.transform = '';
+              }
+
+              if (st.b > 0.08) {
+                st.blur.setAttribute('stdDeviation', `${st.b.toFixed(2)} 0`);
+                st.el.style.filter = `url(#${st.filterId})`;
+              } else {
+                st.blur.setAttribute('stdDeviation', '0 0');
+                st.el.style.filter = '';
+              }
+            }
+          }
+          requestAnimationFrame(tickHeroCursor);
+        }
+
+        requestAnimationFrame(tickHeroCursor);
+      }
+
+      // ── Scroll Character-Wave Reveal in About Section ──────────────────
+      const aboutSection = document.getElementById('about');
+      const aboutWave = document.getElementById('about-wave');
+      if (aboutSection && aboutWave) {
+        const text = aboutWave.textContent.replace(/\s+/g, ' ').trim();
+        aboutWave.textContent = '';
+        const waveChars = [];
+
+        text.split(' ').forEach((word, wIdx) => {
+          if (wIdx > 0) aboutWave.appendChild(document.createTextNode(' '));
+          const wordSpan = document.createElement('span');
+          wordSpan.setAttribute('data-word', 'true');
+          for (const ch of word) {
+            const charSpan = document.createElement('span');
+            charSpan.setAttribute('data-char', 'true');
+            charSpan.textContent = ch;
+            wordSpan.appendChild(charSpan);
+            waveChars.push(charSpan);
+          }
+          aboutWave.appendChild(wordSpan);
+        });
+
+        function updateAboutWave() {
+          if (reducedMotion || window.innerWidth < 900) {
+            waveChars.forEach((c) => c.setAttribute('data-lit', ''));
+            return;
+          }
+          const rect = aboutSection.getBoundingClientRect();
+          const scrollable = Math.max(aboutSection.offsetHeight - window.innerHeight, 1);
+          const progress = Math.min(Math.max(-rect.top / scrollable, 0), 1);
+          const litCount = Math.floor(progress * waveChars.length);
+
+          for (let i = 0; i < waveChars.length; i++) {
+            if (i < litCount) {
+              if (!waveChars[i].hasAttribute('data-lit')) {
+                waveChars[i].setAttribute('data-lit', '');
+              }
+            } else if (waveChars[i].hasAttribute('data-lit')) {
+              waveChars[i].removeAttribute('data-lit');
+            }
+          }
+        }
+
+        window.addEventListener('scroll', updateAboutWave, { passive: true });
+        window.addEventListener('resize', updateAboutWave, { passive: true });
+        updateAboutWave();
+      }
+
+      // ── Custom Black Dot + 6-Dot Trail Cursor ──────────────────────────
+      const tc = document.getElementById('tc');
+      const tcBall = document.getElementById('tc-ball');
+      const tcBallDot = document.getElementById('tc-ball-dot');
+      const tcTrailDots = Array.from(document.querySelectorAll('.tc-trail__dot'));
+
+      if (!reducedMotion && canHover && tc && tcBall && tcBallDot && tcTrailDots.length) {
+        html.classList.add('has-tc');
+
+        let targetX = -100;
+        let targetY = -100;
+        let ballX = -100;
+        let ballY = -100;
+        let visible = false;
+        let stretch = 1;
+        let angle = 0;
+
+        const trail = tcTrailDots.map((el) => ({ el, x: -100, y: -100 }));
+
+        window.addEventListener('pointermove', (e) => {
+          targetX = e.clientX;
+          targetY = e.clientY;
+          if (!visible) {
+            ballX = targetX;
+            ballY = targetY;
+            trail.forEach((t) => {
+              t.x = targetX;
+              t.y = targetY;
+            });
+            visible = true;
+            tc.classList.add('is-visible');
+          }
+        }, { passive: true });
+
+        document.addEventListener('pointerleave', () => {
+          visible = false;
+          tc.classList.remove('is-visible');
+        }, { passive: true });
+
+        window.addEventListener('pointerdown', () => tc.classList.add('is-down'), { passive: true });
+        window.addEventListener('pointerup', () => tc.classList.remove('is-down'), { passive: true });
+
+        function tickCursor() {
+          if (visible) {
+            const dx = targetX - ballX;
+            const dy = targetY - ballY;
+            ballX += dx * 0.42;
+            ballY += dy * 0.42;
+
+            const speed = Math.hypot(dx, dy);
+            const targetStretch = Math.min(1 + speed * 0.022, 1.55);
+            stretch += (targetStretch - stretch) * 0.25;
+            if (speed > 0.35) {
+              angle = Math.atan2(dy, dx);
+            }
+
+            tcBall.style.transform = `translate3d(${ballX.toFixed(2)}px, ${ballY.toFixed(2)}px, 0)`;
+            if (stretch > 1.01) {
+              const squash = 1 / stretch;
+              tcBallDot.style.transform = `rotate(${angle.toFixed(4)}rad) scale(${stretch.toFixed(3)}, ${squash.toFixed(3)})`;
+            } else {
+              tcBallDot.style.transform = 'scale(1, 1)';
+            }
+
+            let prevX = ballX;
+            let prevY = ballY;
+            for (let i = 0; i < trail.length; i++) {
+              const t = trail[i];
+              const ease = 0.42 - i * 0.042;
+              t.x += (prevX - t.x) * ease;
+              t.y += (prevY - t.y) * ease;
+              t.el.style.transform = `translate3d(${t.x.toFixed(2)}px, ${t.y.toFixed(2)}px, 0)`;
+              prevX = t.x;
+              prevY = t.y;
+            }
+          }
+          requestAnimationFrame(tickCursor);
+        }
+
+        requestAnimationFrame(tickCursor);
+      }
+    })();
+  </script>
 </body>
 </html>
